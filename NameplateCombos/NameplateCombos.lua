@@ -1,0 +1,361 @@
+-- Nameplate Combos
+-- Shows combo points under the current target's nameplate for Rogues and
+-- Druids in Cat Form.
+
+local ADDON_NAME, ns = ...
+
+local _, playerClass = UnitClass("player")
+if playerClass ~= "ROGUE" and playerClass ~= "DRUID" then
+    ns.disabled = true
+    return -- nothing to do for other classes
+end
+
+local DB_VERSION = 4
+
+ns.DEFAULTS = {
+    size = 10,        -- pip height in pixels (width is 2x)
+    spacing = 1,      -- gap between pips
+    yOffset = -1,     -- vertical offset from the bottom of the health bar
+    showEmpty = true, -- show empty pips when you have 0 points
+    alpha = 1,        -- overall opacity of the tracker (0.1 - 1)
+    colorFull  = { 1.0, 0.85, 0.1 },  -- filled pip
+    colorMax   = { 1.0, 0.25, 0.1 },  -- all pips filled
+    colorEmpty = { 0.15, 0.15, 0.15 }, -- empty pip
+    glow = true,          -- glow behind the pips at max combo points
+    glowPulse = true,     -- pulse the glow (false = steady glow)
+    pulseSpeed = 1.2,     -- seconds per pulse
+    colorGlow  = { 1.0, 0.35, 0.1 },
+    minimap = { angle = 220, hide = false },
+}
+
+local EMPTY_ALPHA = 0.8
+
+-- Trapezoid pips: A (wide top) and B (wide bottom) alternate and interlock.
+-- Must match tools/make_textures.py: 64x32 texture with a 12px slant.
+local MEDIA = "Interface\\AddOns\\" .. ADDON_NAME .. "\\media\\"
+local TEX_A = MEDIA .. "trapezoid_a"
+local TEX_B = MEDIA .. "trapezoid_b"
+local GLOW_A = MEDIA .. "glow_a"  -- 2x the pip size, shape centered
+local GLOW_B = MEDIA .. "glow_b"
+local GLOW_SCALE = 2
+local GLOW_STEADY_ALPHA = 0.85
+local GLOW_MIN_ALPHA = 0.15       -- lowest point of the pulse
+local PIP_ASPECT = 2          -- width / height
+local SLANT_RATIO = 12 / 64   -- slant as a fraction of pip width
+local CAT_FORM_ID = 1 -- GetShapeshiftFormID() for Cat Form
+local PREVIEW_POINTS = 3
+
+local container = CreateFrame("Frame", ADDON_NAME .. "Frame", UIParent)
+container:Hide()
+local pips = {}
+
+-- Glow layer: sits between the container and the pips.
+local glowFrame = CreateFrame("Frame", nil, container)
+glowFrame:SetAllPoints()
+glowFrame:Hide()
+local glows = {}
+local pulseTime = 0
+
+glowFrame:SetScript("OnUpdate", function(self, elapsed)
+    local db = ns.db
+    if not db.glowPulse then return end
+    pulseTime = pulseTime + elapsed
+    local period = math.max(0.2, db.pulseSpeed)
+    local wave = 0.5 - 0.5 * math.cos(2 * math.pi * pulseTime / period)
+    self:SetAlpha(GLOW_MIN_ALPHA + (1 - GLOW_MIN_ALPHA) * wave)
+end)
+
+---------------------------------------------------------------------------
+-- Saved variables
+---------------------------------------------------------------------------
+
+local function CopyDefault(v)
+    if type(v) ~= "table" then return v end
+    local t = {}
+    for k, val in pairs(v) do t[k] = CopyDefault(val) end
+    return t
+end
+
+local function ApplyDefaults(target, defaults)
+    for k, v in pairs(defaults) do
+        if target[k] == nil then
+            target[k] = CopyDefault(v)
+        elseif type(v) == "table" and type(target[k]) == "table" and #v == 0 then
+            ApplyDefaults(target[k], v) -- nested settings tables (not colors)
+        end
+    end
+end
+
+function ns.ResetSettings()
+    local minimap = ns.db.minimap -- keep the button where the user put it
+    wipe(ns.db)
+    ApplyDefaults(ns.db, ns.DEFAULTS)
+    ns.db.minimap = minimap
+    ns.db.version = DB_VERSION
+end
+
+---------------------------------------------------------------------------
+-- Helpers
+---------------------------------------------------------------------------
+
+local function GetPoints()
+    if GetComboPoints then
+        return GetComboPoints("player", "target") or 0
+    end
+    return UnitPower("player", Enum.PowerType.ComboPoints) or 0
+end
+
+local function GetMaxPoints()
+    if UnitPowerMax and Enum and Enum.PowerType and Enum.PowerType.ComboPoints then
+        local max = UnitPowerMax("player", Enum.PowerType.ComboPoints)
+        if max and max > 0 then return math.min(max, 10) end
+    end
+    return 5
+end
+
+local function UsesComboPoints()
+    if playerClass == "ROGUE" then return true end
+    return GetShapeshiftFormID() == CAT_FORM_ID
+end
+
+local function TargetIsValid()
+    return UnitExists("target")
+        and UnitCanAttack("player", "target")
+        and not UnitIsDead("target")
+end
+
+-- The health bar is the visible part of the plate; anchoring to it (instead
+-- of the whole plate frame) keeps the pips tight under the bar.
+local function GetPlateAnchor(plate)
+    local uf = plate.UnitFrame
+    if uf then
+        return uf.healthBar or uf.HealthBar or uf
+    end
+    return plate
+end
+
+---------------------------------------------------------------------------
+-- Pips
+---------------------------------------------------------------------------
+
+local function CreatePip(i)
+    local pip = CreateFrame("Frame", nil, container)
+    pip.fill = pip:CreateTexture(nil, "ARTWORK")
+    pip.fill:SetAllPoints()
+    pip.fill:SetTexture(i % 2 == 1 and TEX_A or TEX_B)
+    pips[i] = pip
+
+    local glow = glowFrame:CreateTexture(nil, "ARTWORK")
+    glow:SetTexture(i % 2 == 1 and GLOW_A or GLOW_B)
+    glow:SetPoint("CENTER", pip, "CENTER")
+    glows[i] = glow
+    return pip
+end
+
+local function Layout(maxPoints)
+    local db = ns.db
+    local height = db.size
+    local width = height * PIP_ASPECT
+    -- Each pip overlaps the previous one by the slant so the edges interlock.
+    local step = width * (1 - SLANT_RATIO) + db.spacing
+    container:SetSize((maxPoints - 1) * step + width, height)
+
+    for i = 1, math.max(maxPoints, #pips) do
+        local pip = pips[i] or CreatePip(i)
+        if i <= maxPoints then
+            pip:SetSize(width, height)
+            pip:ClearAllPoints()
+            pip:SetPoint("LEFT", container, "LEFT", (i - 1) * step, 0)
+            pip:Show()
+            glows[i]:SetSize(width * GLOW_SCALE, height * GLOW_SCALE)
+            glows[i]:Show()
+        else
+            pip:Hide()
+            glows[i]:Hide()
+        end
+    end
+end
+
+local function Paint(points, maxPoints)
+    local db = ns.db
+    local full = (points >= maxPoints) and db.colorMax or db.colorFull
+    local empty = db.colorEmpty
+    for i = 1, maxPoints do
+        if i <= points then
+            pips[i].fill:SetVertexColor(full[1], full[2], full[3], 1)
+        else
+            pips[i].fill:SetVertexColor(empty[1], empty[2], empty[3], EMPTY_ALPHA)
+        end
+    end
+    container:SetAlpha(db.alpha)
+
+    if db.glow and points >= maxPoints then
+        local c = db.colorGlow
+        for i = 1, maxPoints do
+            glows[i]:SetVertexColor(c[1], c[2], c[3], 1)
+        end
+        if not glowFrame:IsShown() then
+            pulseTime = 0 -- start each pulse cycle from dim
+            glowFrame:SetAlpha(db.glowPulse and GLOW_MIN_ALPHA or GLOW_STEADY_ALPHA)
+            glowFrame:Show()
+        elseif not db.glowPulse then
+            glowFrame:SetAlpha(GLOW_STEADY_ALPHA)
+        end
+    else
+        glowFrame:Hide()
+    end
+end
+
+local function Attach(parent, anchor, yOffset)
+    container:SetParent(parent)
+    container:SetFrameStrata(parent:GetFrameStrata())
+    local level = parent:GetFrameLevel() + 10
+    container:SetFrameLevel(level)
+    glowFrame:SetFrameLevel(level + 1)
+    for _, pip in ipairs(pips) do pip:SetFrameLevel(level + 2) end
+    container:ClearAllPoints()
+    container:SetPoint("TOP", anchor, "BOTTOM", 0, yOffset)
+end
+
+---------------------------------------------------------------------------
+-- Update
+---------------------------------------------------------------------------
+
+function ns.Update()
+    local db = ns.db
+    if not db then return end
+
+    local plate = UsesComboPoints() and TargetIsValid()
+        and C_NamePlate.GetNamePlateForUnit("target")
+
+    if plate then
+        local points = GetPoints()
+        if points == 0 and not db.showEmpty then
+            container:Hide()
+            return
+        end
+        local maxPoints = GetMaxPoints()
+        Layout(maxPoints)
+        Attach(plate, GetPlateAnchor(plate), db.yOffset)
+        Paint(points, maxPoints)
+        container:Show()
+    elseif ns.previewAnchor and ns.previewAnchor:IsVisible() then
+        -- Options panel is open and there's no target: show a sample.
+        Layout(5)
+        Attach(ns.previewAnchor, ns.previewAnchor, 0)
+        container:ClearAllPoints()
+        container:SetPoint("CENTER", ns.previewAnchor, "CENTER")
+        Paint(ns.previewPoints or PREVIEW_POINTS, 5)
+        container:Show()
+    else
+        container:Hide()
+    end
+end
+
+---------------------------------------------------------------------------
+-- Events
+---------------------------------------------------------------------------
+
+local events = CreateFrame("Frame")
+
+local function SafeRegister(event, ...)
+    -- Some events differ between client versions; ignore unknown ones.
+    if select("#", ...) > 0 then
+        pcall(events.RegisterUnitEvent, events, event, ...)
+    else
+        pcall(events.RegisterEvent, events, event)
+    end
+end
+
+events:SetScript("OnEvent", function(_, event, arg1)
+    if event == "ADDON_LOADED" then
+        if arg1 ~= ADDON_NAME then return end
+        NameplateCombosDB = NameplateCombosDB or {}
+        local db = NameplateCombosDB
+        local version = db.version or 1
+        if version < 2 then
+            -- v2 anchors to the health bar; old offset no longer applies.
+            db.yOffset = nil
+        end
+        -- (v4 only adds glow settings; defaults fill them in)
+        if version < 3 then
+            -- v3 trapezoids interlock; the old square spacing is too wide.
+            db.spacing = nil
+        end
+        ApplyDefaults(db, ns.DEFAULTS)
+        db.version = DB_VERSION
+        ns.db = db
+        events:UnregisterEvent("ADDON_LOADED")
+        if ns.OnLoaded then ns.OnLoaded() end
+        return
+    end
+
+    if event == "NAME_PLATE_UNIT_REMOVED" and arg1 and UnitIsUnit(arg1, "target") then
+        -- Our plate is going away; detach so we aren't hidden with it.
+        container:SetParent(UIParent)
+        container:Hide()
+        return
+    end
+
+    ns.Update()
+end)
+
+events:RegisterEvent("ADDON_LOADED")
+SafeRegister("PLAYER_ENTERING_WORLD")
+SafeRegister("PLAYER_TARGET_CHANGED")
+SafeRegister("NAME_PLATE_UNIT_ADDED")
+SafeRegister("NAME_PLATE_UNIT_REMOVED")
+SafeRegister("UNIT_POWER_FREQUENT", "player")
+SafeRegister("UNIT_POWER_UPDATE", "player")
+SafeRegister("UNIT_MAXPOWER", "player")
+SafeRegister("PLAYER_COMBO_POINTS")
+SafeRegister("UNIT_FLAGS", "target")
+SafeRegister("UNIT_HEALTH", "target")
+SafeRegister("UPDATE_SHAPESHIFT_FORM")
+
+---------------------------------------------------------------------------
+-- Slash commands: /ncp
+---------------------------------------------------------------------------
+
+function ns.Print(msg)
+    print("|cffffd200Nameplate Combos:|r " .. msg)
+end
+
+SLASH_NAMEPLATECOMBOS1 = "/ncp"
+SlashCmdList.NAMEPLATECOMBOS = function(input)
+    local db = ns.db
+    local cmd, value = strsplit(" ", (input or ""):lower(), 2)
+    local num = tonumber(value)
+
+    if cmd == "" then
+        ns.ToggleOptions()
+        return
+    elseif cmd == "size" and num then
+        db.size = math.max(4, math.min(30, num))
+    elseif cmd == "spacing" and num then
+        db.spacing = math.max(0, math.min(10, num))
+    elseif cmd == "y" and num then
+        db.yOffset = num
+    elseif cmd == "empty" then
+        db.showEmpty = not db.showEmpty
+    elseif cmd == "minimap" then
+        db.minimap.hide = not db.minimap.hide
+        ns.UpdateMinimapButton()
+    elseif cmd == "reset" then
+        ns.ResetSettings()
+        ns.UpdateMinimapButton()
+    else
+        ns.Print("commands:")
+        print("  /ncp                - open options")
+        print("  /ncp size <4-30>    - pip size")
+        print("  /ncp spacing <0-10> - gap between pips")
+        print("  /ncp y <number>     - vertical offset (negative = lower)")
+        print("  /ncp empty          - toggle showing empty pips")
+        print("  /ncp minimap        - toggle the minimap button")
+        print("  /ncp reset          - restore defaults")
+        return
+    end
+    ns.Print("settings updated")
+    if ns.RefreshOptions then ns.RefreshOptions() end
+    ns.Update()
+end
