@@ -3,7 +3,7 @@
 local ADDON_NAME, ns = ...
 if ns.disabled then return end
 
-local ICON = "Interface\\Icons\\Ability_Rogue_Eviscerate"
+local ICON = "Interface\\AddOns\\" .. ADDON_NAME .. "\\media\\icon"
 local panel
 local controls = {} -- each has :Refresh()
 
@@ -353,7 +353,7 @@ local function CreateMinimapButton()
     icon:SetTexture(ICON)
     icon:SetSize(17, 17)
     icon:SetPoint("TOPLEFT", 7, -6)
-    icon:SetTexCoord(0.05, 0.95, 0.05, 0.95)
+    icon:SetTexCoord(0, 1, 0, 1)
 
     local border = button:CreateTexture(nil, "OVERLAY")
     border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
