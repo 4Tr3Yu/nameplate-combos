@@ -10,7 +10,7 @@ if playerClass ~= "ROGUE" and playerClass ~= "DRUID" then
     return -- nothing to do for other classes
 end
 
-local DB_VERSION = 5
+local DB_VERSION = 6
 
 ns.DEFAULTS = {
     size = 10,        -- pip height in pixels (width is 2x)
@@ -26,11 +26,15 @@ ns.DEFAULTS = {
     pulseSpeed = 1.2,     -- seconds per pulse
     colorGlow  = { 1.0, 0.35, 0.1 },
     minimap = { angle = 220, hide = false },
-    -- Finisher damage overlay on the target's health bar
+    -- Finisher damage indicator: a thin bar next to the health bar, on the
+    -- same scale, marking the health the finisher would take off.
     overlay = true,
-    overlayColor     = { 1.0, 1.0, 1.0 },
+    overlayColor     = { 1.0, 0.85, 0.1 },
     overlayKillColor = { 1.0, 0.15, 0.15 }, -- the finisher would kill
-    overlayAlpha = 0.55,
+    overlayAlpha = 1,
+    overlayHeight = 3, -- bar thickness in pixels
+    overlayX = 0,      -- horizontal offset from the health bar
+    overlayY = 1,      -- vertical offset from the top of the health bar
     overlayScale = 1,  -- damage adjustment (armor, talents), 0.5 - 1.5
     overlaySpell = { ROGUE = "EVISCERATE", DRUID = "FEROCIOUS_BITE" },
 }
@@ -235,21 +239,22 @@ local function Attach(parent, anchor, yOffset)
 end
 
 ---------------------------------------------------------------------------
--- Damage overlay: covers the part of the health bar the tracked finisher
--- would remove, ending at the current health.
+-- Damage indicator: its own thin bar, attached to the plate like the combo
+-- points (the health bar itself is never touched). It is as wide as the
+-- health bar and uses the same scale, so the yellow segment runs from
+-- (health - damage) to the current health.
 ---------------------------------------------------------------------------
 
-local overlay = CreateFrame("Frame", nil, UIParent)
-overlay:Hide()
-overlay.tex = overlay:CreateTexture(nil, "OVERLAY")
-overlay.tex:SetAllPoints()
+local indicator = CreateFrame("Frame", nil, UIParent)
+indicator:Hide()
+indicator.fill = indicator:CreateTexture(nil, "OVERLAY")
 
-local function DrawOverlay(parent, bar, health, maxHealth, damage)
+local function DrawIndicator(parent, anchor, health, maxHealth, damage)
     local db = ns.db
-    local width = bar and bar:GetWidth()
+    local width = anchor and anchor:GetWidth()
     if not (db.overlay and damage and damage > 0 and health and health > 0
             and maxHealth and maxHealth > 0 and width and width > 0) then
-        overlay:Hide()
+        indicator:Hide()
         return
     end
     health = math.min(health, maxHealth)
@@ -257,18 +262,22 @@ local function DrawOverlay(parent, bar, health, maxHealth, damage)
     local left = width * math.max(0, health - damage) / maxHealth
     if right - left < 1 then left = math.max(0, right - 1) end
 
-    overlay:SetParent(parent)
-    -- Same layering as the combo points (see Attach): well above the plate,
-    -- so nothing in the health bar can cover it.
-    overlay:SetFrameStrata(parent:GetFrameStrata())
-    overlay:SetFrameLevel(parent:GetFrameLevel() + 10)
-    overlay:ClearAllPoints()
-    overlay:SetPoint("TOPLEFT", bar, "TOPLEFT", left, 0)
-    overlay:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", left, 0)
-    overlay:SetWidth(right - left)
+    -- Same parenting and layering as the combo points (see Attach).
+    indicator:SetParent(parent)
+    indicator:SetFrameStrata(parent:GetFrameStrata())
+    indicator:SetFrameLevel(parent:GetFrameLevel() + 10)
+    indicator:ClearAllPoints()
+    indicator:SetPoint("BOTTOMLEFT", anchor, "TOPLEFT", db.overlayX, db.overlayY)
+    indicator:SetSize(width, db.overlayHeight)
+
+    local fill = indicator.fill
+    fill:ClearAllPoints()
+    fill:SetPoint("TOPLEFT", indicator, "TOPLEFT", left, 0)
+    fill:SetPoint("BOTTOMLEFT", indicator, "BOTTOMLEFT", left, 0)
+    fill:SetWidth(right - left)
     local c = (damage >= health) and db.overlayKillColor or db.overlayColor
-    overlay.tex:SetColorTexture(c[1], c[2], c[3], db.overlayAlpha)
-    overlay:Show()
+    fill:SetColorTexture(c[1], c[2], c[3], db.overlayAlpha)
+    indicator:Show()
 end
 
 -- The overlay must never break the combo points: run it protected, and
@@ -278,10 +287,10 @@ local overlayErrorShown = false
 local function SafeOverlay(fn)
     local ok, err = pcall(fn)
     if not ok then
-        overlay:Hide()
+        indicator:Hide()
         if not overlayErrorShown then
             overlayErrorShown = true
-            ns.Print("damage overlay error (combo points still work): " .. tostring(err))
+            ns.Print("damage indicator error (combo points still work): " .. tostring(err))
         end
     end
 end
@@ -310,7 +319,7 @@ function ns.Update()
         end
         SafeOverlay(function()
             local health, maxHealth = TargetHealth()
-            DrawOverlay(plate, GetHealthBar(plate), health, maxHealth,
+            DrawIndicator(plate, GetPlateAnchor(plate), health, maxHealth,
                 health and ns.EstimateDamage(points))
         end)
     elseif ns.previewAnchor and ns.previewAnchor:IsVisible() then
@@ -329,11 +338,11 @@ function ns.Update()
                 damage, fullDamage = points * 20, 100 -- spell not learned: sample
             end
             local maxHealth = fullDamage * 1.6
-            DrawOverlay(ns.previewAnchor, bar, maxHealth * ns.PREVIEW_HEALTH, maxHealth, damage)
+            DrawIndicator(ns.previewAnchor, bar, maxHealth * ns.PREVIEW_HEALTH, maxHealth, damage)
         end)
     else
         container:Hide()
-        overlay:Hide()
+        indicator:Hide()
     end
 end
 
@@ -363,6 +372,11 @@ events:SetScript("OnEvent", function(_, event, arg1)
             db.yOffset = nil
         end
         -- (v4 adds glow settings, v5 the damage overlay; defaults fill them in)
+        if version < 6 then
+            -- v6 draws a separate yellow bar instead of tinting the health
+            -- bar; the old white, half-transparent defaults don't suit it.
+            db.overlayColor, db.overlayAlpha = nil, nil
+        end
         if version < 3 then
             -- v3 trapezoids interlock; the old square spacing is too wide.
             db.spacing = nil
@@ -379,8 +393,8 @@ events:SetScript("OnEvent", function(_, event, arg1)
         -- Our plate is going away; detach so we aren't hidden with it.
         container:SetParent(UIParent)
         container:Hide()
-        overlay:SetParent(UIParent)
-        overlay:Hide()
+        indicator:SetParent(UIParent)
+        indicator:Hide()
         return
     end
 
@@ -409,15 +423,16 @@ SafeRegister("LEARNED_SPELL_IN_TAB")
 SafeRegister("UPDATE_SHAPESHIFT_FORM")
 
 ---------------------------------------------------------------------------
--- /ncp debug: everything the overlay depends on, step by step
+-- /ncp debug: everything the damage indicator depends on, step by step
 ---------------------------------------------------------------------------
 
 function ns.PrintDebug()
     local db = ns.db
     local version = (C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata)(ADDON_NAME, "Version")
     ns.Print("debug (version " .. tostring(version) .. ")")
-    print("overlay enabled: " .. tostring(db.overlay) .. ", opacity: " .. tostring(db.overlayAlpha)
-        .. ", adjust: " .. tostring(db.overlayScale))
+    print(string.format("indicator enabled: %s, opacity: %s, adjust: %s, height: %s, x: %s, y: %s",
+        tostring(db.overlay), tostring(db.overlayAlpha), tostring(db.overlayScale),
+        tostring(db.overlayHeight), tostring(db.overlayX), tostring(db.overlayY)))
     print("uses combo points: " .. tostring(UsesComboPoints())
         .. ", combo points: " .. tostring(GetPoints()))
     for _, line in ipairs(ns.DamageDebugLines()) do print(line) end
@@ -440,13 +455,14 @@ function ns.PrintDebug()
         tostring(plate.UnitFrame ~= nil), tostring(bar ~= nil),
         tostring(bar and math.floor(bar:GetWidth() + 0.5))))
     if bar then
-        print(string.format("levels: plate=%d (%s), bar=%d (%s), overlay=%d (%s)",
+        print(string.format("levels: plate=%d (%s), bar=%d (%s), indicator=%d (%s)",
             plate:GetFrameLevel(), plate:GetFrameStrata(),
             bar:GetFrameLevel(), bar:GetFrameStrata(),
-            overlay:GetFrameLevel(), overlay:GetFrameStrata()))
+            indicator:GetFrameLevel(), indicator:GetFrameStrata()))
     end
-    print(string.format("overlay shown: %s, width: %s",
-        tostring(overlay:IsShown()), tostring(math.floor(overlay:GetWidth() + 0.5))))
+    print(string.format("indicator shown: %s, bar width: %s, yellow part: %s",
+        tostring(indicator:IsShown()), tostring(math.floor(indicator:GetWidth() + 0.5)),
+        tostring(math.floor(indicator.fill:GetWidth() + 0.5))))
 end
 
 ---------------------------------------------------------------------------
@@ -492,8 +508,8 @@ SlashCmdList.NAMEPLATECOMBOS = function(input)
         print("  /ncp spacing <0-10> - gap between pips")
         print("  /ncp y <number>     - vertical offset (negative = lower)")
         print("  /ncp empty          - toggle showing empty pips")
-        print("  /ncp overlay        - toggle the finisher damage overlay")
-        print("  /ncp debug          - show why the overlay is or isn't showing")
+        print("  /ncp overlay        - toggle the finisher damage indicator")
+        print("  /ncp debug          - show why the indicator is or isn't showing")
         print("  /ncp minimap        - toggle the minimap button")
         print("  /ncp reset          - restore defaults")
         return

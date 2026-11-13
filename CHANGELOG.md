@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.0
+
+### Changed
+
+- **The damage overlay is now a separate indicator.** Instead of tinting the target's health bar, the finisher damage shows as a thin yellow bar of its own, attached to the nameplate the same way as the combo points. The health bar itself is no longer changed.
+- The indicator is as wide as the health bar and uses the same scale: the yellow part runs from where the target's health would drop to after the finisher up to its current health. It still turns red when the finisher would kill.
+- By default it sits just above the health bar.
+- If you used 1.4.x, the indicator color and opacity reset to the new yellow, fully opaque defaults.
+
+### New
+
+- Indicator position options: height, vertical offset and horizontal offset.
+
 ## 1.4.2
 
 ### Fixed

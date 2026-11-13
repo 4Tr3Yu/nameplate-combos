@@ -17,7 +17,7 @@ At max combo points the bar glows (pulsing by default):
 - Combo points sit directly under the target's health bar and follow the nameplate.
 - Interlocking trapezoid pips that form one continuous bar.
 - Different color at max combo points, plus an optional glow or pulse.
-- Damage overlay: a strip on the target's health bar shows roughly how much health your finisher would take off at your current combo points. It turns red when the finisher would kill.
+- Damage indicator: a thin yellow bar next to the target's health bar shows roughly how much health your finisher would take off at your current combo points. It turns red when the finisher would kill.
 - Shows only for attackable, living targets. For druids, only in Cat Form.
 - Options panel with a live preview, opened from a minimap button or `/ncp`.
 - Settings are saved per character.
@@ -55,11 +55,13 @@ Target an enemy as a Rogue or in Cat Form. The pips appear under its nameplate.
 | Appearance | Opacity, height, spacing, vertical offset |
 | Max combo points | Glow on/off, pulse or steady, pulse duration, glow color |
 | General | Show empty pips, show minimap button |
-| Damage overlay | On/off, tracked finisher, overlay and lethal colors, opacity, damage adjust |
+| Damage indicator | On/off, tracked finisher, indicator and lethal colors, opacity, height, vertical and horizontal offset, damage adjust |
 
-### Damage overlay
+### Damage indicator
 
-The overlay tracks one finisher, picked in the options panel:
+The indicator is a thin bar of its own, attached to the nameplate like the combo points; the health bar itself isn't changed. It's as wide as the health bar and on the same scale: the yellow part runs from where the target's health would drop to after the finisher up to its current health. By default it sits just above the health bar; move it with the offset sliders.
+
+It tracks one finisher, picked in the options panel:
 
 | Class | Finishers (default first) |
 |---|---|
@@ -80,8 +82,8 @@ Drag the minimap button to move it around the minimap.
 /ncp spacing <0-10>  gap between pips
 /ncp y <number>      vertical offset (negative = lower)
 /ncp empty           toggle showing empty pips
-/ncp overlay         toggle the finisher damage overlay
-/ncp debug           show why the overlay is or isn't showing
+/ncp overlay         toggle the finisher damage indicator
+/ncp debug           show why the indicator is or isn't showing
 /ncp minimap         toggle the minimap button
 /ncp reset           restore defaults
 ```
@@ -97,7 +99,7 @@ Drag the minimap button to move it around the minimap.
   Put the last number it prints on the `## Interface:` line, or tick **Load out of date AddOns** in the AddOns list.
 - **Nothing shows:** check that enemy nameplates are on, that you're a Rogue or in Cat Form, and that the target is hostile and alive.
 - **Pips show as solid green squares:** the game can't find the images. Check that `NameplateCombos/media/` exists and restart the game.
-- **Damage overlay doesn't show:** type `/ncp debug` with a target selected and you have combo points. It lists each step the overlay needs (finisher, damage numbers, target health, health bar) so you can see which one is missing.
+- **Damage indicator doesn't show:** type `/ncp debug` with a target selected and you have combo points. It lists each step the indicator needs (finisher, damage numbers, target health, health bar) so you can see which one is missing.
 - **Lost the minimap button:** type `/ncp` and tick **Show minimap button**.
 
 ## Development
