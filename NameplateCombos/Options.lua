@@ -213,7 +213,8 @@ local function CreateFinisherInfo(parent)
     fs:SetWidth(220)
     fs:SetJustifyH("LEFT")
     function fs:Refresh()
-        self:SetText(ns.DescribeTrackedFinisher())
+        local ok, text = pcall(ns.DescribeTrackedFinisher)
+        self:SetText(ok and text or "|cffff5555Couldn't read the spell's damage|r")
     end
     table.insert(controls, fs)
     return fs

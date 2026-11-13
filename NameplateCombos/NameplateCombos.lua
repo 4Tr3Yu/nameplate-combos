@@ -244,7 +244,7 @@ overlay:Hide()
 overlay.tex = overlay:CreateTexture(nil, "OVERLAY")
 overlay.tex:SetAllPoints()
 
-local function UpdateOverlay(parent, bar, health, maxHealth, damage)
+local function DrawOverlay(parent, bar, health, maxHealth, damage)
     local db = ns.db
     local width = bar and bar:GetWidth()
     if not (db.overlay and damage and damage > 0 and health and health > 0
@@ -269,6 +269,21 @@ local function UpdateOverlay(parent, bar, health, maxHealth, damage)
     overlay:Show()
 end
 
+-- The overlay must never break the combo points: run it protected, and
+-- report the first error so it can be fixed.
+local overlayErrorShown = false
+
+local function SafeOverlay(fn)
+    local ok, err = pcall(fn)
+    if not ok then
+        overlay:Hide()
+        if not overlayErrorShown then
+            overlayErrorShown = true
+            ns.Print("damage overlay error (combo points still work): " .. tostring(err))
+        end
+    end
+end
+
 ---------------------------------------------------------------------------
 -- Update
 ---------------------------------------------------------------------------
@@ -282,18 +297,20 @@ function ns.Update()
 
     if plate then
         local points = GetPoints()
-        local health, maxHealth = TargetHealth()
-        UpdateOverlay(plate, GetHealthBar(plate), health, maxHealth,
-            health and ns.EstimateDamage(points))
         if points == 0 and not db.showEmpty then
             container:Hide()
-            return
+        else
+            local maxPoints = GetMaxPoints()
+            Layout(maxPoints)
+            Attach(plate, GetPlateAnchor(plate), db.yOffset)
+            Paint(points, maxPoints)
+            container:Show()
         end
-        local maxPoints = GetMaxPoints()
-        Layout(maxPoints)
-        Attach(plate, GetPlateAnchor(plate), db.yOffset)
-        Paint(points, maxPoints)
-        container:Show()
+        SafeOverlay(function()
+            local health, maxHealth = TargetHealth()
+            DrawOverlay(plate, GetHealthBar(plate), health, maxHealth,
+                health and ns.EstimateDamage(points))
+        end)
     elseif ns.previewAnchor and ns.previewAnchor:IsVisible() then
         -- Options panel is open and there's no target: show a sample under a
         -- fake health bar.
@@ -303,13 +320,15 @@ function ns.Update()
         Attach(ns.previewAnchor, bar, db.yOffset)
         Paint(points, 5)
         container:Show()
-        -- Fake target sized so 5 points is lethal and fewer points aren't.
-        local damage, fullDamage = ns.EstimateDamage(points), ns.EstimateDamage(5)
-        if not (damage and fullDamage) then
-            damage, fullDamage = points * 20, 100 -- spell not learned: sample
-        end
-        local maxHealth = fullDamage * 1.6
-        UpdateOverlay(ns.previewAnchor, bar, maxHealth * ns.PREVIEW_HEALTH, maxHealth, damage)
+        SafeOverlay(function()
+            -- Fake target sized so 5 points is lethal and fewer points aren't.
+            local damage, fullDamage = ns.EstimateDamage(points), ns.EstimateDamage(5)
+            if not (damage and fullDamage) then
+                damage, fullDamage = points * 20, 100 -- spell not learned: sample
+            end
+            local maxHealth = fullDamage * 1.6
+            DrawOverlay(ns.previewAnchor, bar, maxHealth * ns.PREVIEW_HEALTH, maxHealth, damage)
+        end)
     else
         container:Hide()
         overlay:Hide()

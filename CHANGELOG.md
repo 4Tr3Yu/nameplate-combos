@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.1
+
+### Fixed
+
+- Combo points stopped updating and the damage overlay didn't show in 1.4.0. The overlay used spell functions that newer game clients no longer have; it now works with both old and new clients.
+- If the damage overlay ever runs into a problem, the combo points keep working and a single message is printed in chat instead.
+
 ## 1.4.0
 
 ### New

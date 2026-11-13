@@ -112,4 +112,15 @@ The logo (`docs/logo.png`) and the in-game icon (`NameplateCombos/media/icon.tga
 python3 tools/make_logo.py
 ```
 
+### Release zips
+
+Every version confirmed to work in game gets a git tag (`v1.3.1`, ...) and a zip. To build the zip for a tag or for the current commit:
+
+```
+tools/make_release_zip.sh v1.3.1   # a tagged version
+tools/make_release_zip.sh          # the current commit
+```
+
+It writes `releases/NameplateCombos-<version>.zip` (not committed). The zip holds a single `NameplateCombos/` folder, ready to upload to CurseForge or to drop into `Interface/AddOns` to roll back.
+
 If you change the texture size or slant, update `PIP_ASPECT` and `SLANT_RATIO` in `NameplateCombos.lua` to match.

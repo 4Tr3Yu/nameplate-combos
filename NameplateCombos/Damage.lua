@@ -31,6 +31,36 @@ ns.FINISHERS = {
     },
 }
 
+---------------------------------------------------------------------------
+-- Spell API: newer clients replaced GetSpellInfo & co. with C_Spell /
+-- C_SpellBook. Use whichever this client has.
+---------------------------------------------------------------------------
+
+local function SpellName(id)
+    if C_Spell and C_Spell.GetSpellName then return C_Spell.GetSpellName(id) end
+    if GetSpellInfo then return (GetSpellInfo(id)) end
+end
+
+local function SpellIDByName(name)
+    if C_Spell and C_Spell.GetSpellInfo then
+        local info = C_Spell.GetSpellInfo(name)
+        return info and info.spellID
+    end
+    if GetSpellInfo then return select(7, GetSpellInfo(name)) end
+end
+
+local function SpellSubtext(id)
+    if C_Spell and C_Spell.GetSpellSubtext then return C_Spell.GetSpellSubtext(id) end
+    if GetSpellSubtext then return GetSpellSubtext(id) end
+end
+
+local function Knows(id)
+    if IsPlayerSpell and IsPlayerSpell(id) then return true end
+    if C_SpellBook and C_SpellBook.IsSpellKnown and C_SpellBook.IsSpellKnown(id) then return true end
+    if IsSpellKnown and IsSpellKnown(id) then return true end
+    return false
+end
+
 function ns.GetFinishers()
     return ns.FINISHERS[playerClass] or {}
 end
@@ -50,18 +80,12 @@ end
 
 function ns.FinisherName(f)
     if not f then return "-" end
-    return (GetSpellInfo(f.ranks[1])) or f.name
+    return SpellName(f.ranks[1]) or f.name
 end
 
 ---------------------------------------------------------------------------
 -- Rank lookup
 ---------------------------------------------------------------------------
-
-local function Knows(id)
-    if IsPlayerSpell and IsPlayerSpell(id) then return true end
-    if IsSpellKnown and IsSpellKnown(id) then return true end
-    return false
-end
 
 -- Returns the spell ID and rank number of the highest known rank.
 local function HighestRank(f)
@@ -69,7 +93,7 @@ local function HighestRank(f)
         if Knows(f.ranks[i]) then return f.ranks[i], i end
     end
     -- Fallback for clients with different spell IDs: look the spell up by name.
-    local id = select(7, GetSpellInfo(ns.FinisherName(f)))
+    local id = SpellIDByName(ns.FinisherName(f))
     if id then return id, nil end
 end
 
@@ -85,6 +109,7 @@ local function TooltipLines(spellID)
     end
     scanTip:SetOwner(WorldFrame, "ANCHOR_NONE")
     scanTip:ClearLines()
+    if not scanTip.SetSpellByID then return {} end
     scanTip:SetSpellByID(spellID)
     local lines = {}
     local prefix = scanTip:GetName() .. "TextLeft"
@@ -131,7 +156,7 @@ local function GetData(f)
             local maxPoint = 0
             for cp in pairs(perPoint) do maxPoint = math.max(maxPoint, cp) end
             if maxPoint > 0 then
-                local rankText = GetSpellSubtext and GetSpellSubtext(id)
+                local rankText = SpellSubtext(id)
                 if (not rankText or rankText == "") and rank then rankText = "Rank " .. rank end
                 data = { id = id, rankText = rankText, perPoint = perPoint,
                          maxPoint = maxPoint, energyBonus = energyBonus }
