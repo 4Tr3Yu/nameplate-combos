@@ -2,7 +2,7 @@
 ## Title: Nameplate Combos
 ## Notes: Shows rogue / cat-form druid combo points under your target's nameplate.
 ## Author: Jorge Aguirre
-## Version: 1.4.1
+## Version: 1.4.2
 ## IconTexture: Interface\AddOns\NameplateCombos\media\icon
 ## SavedVariables: NameplateCombosDB
 

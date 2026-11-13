@@ -258,8 +258,10 @@ local function DrawOverlay(parent, bar, health, maxHealth, damage)
     if right - left < 1 then left = math.max(0, right - 1) end
 
     overlay:SetParent(parent)
+    -- Same layering as the combo points (see Attach): well above the plate,
+    -- so nothing in the health bar can cover it.
     overlay:SetFrameStrata(parent:GetFrameStrata())
-    overlay:SetFrameLevel(bar:GetFrameLevel() + 2)
+    overlay:SetFrameLevel(parent:GetFrameLevel() + 10)
     overlay:ClearAllPoints()
     overlay:SetPoint("TOPLEFT", bar, "TOPLEFT", left, 0)
     overlay:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", left, 0)
@@ -407,6 +409,47 @@ SafeRegister("LEARNED_SPELL_IN_TAB")
 SafeRegister("UPDATE_SHAPESHIFT_FORM")
 
 ---------------------------------------------------------------------------
+-- /ncp debug: everything the overlay depends on, step by step
+---------------------------------------------------------------------------
+
+function ns.PrintDebug()
+    local db = ns.db
+    local version = (C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata)(ADDON_NAME, "Version")
+    ns.Print("debug (version " .. tostring(version) .. ")")
+    print("overlay enabled: " .. tostring(db.overlay) .. ", opacity: " .. tostring(db.overlayAlpha)
+        .. ", adjust: " .. tostring(db.overlayScale))
+    print("uses combo points: " .. tostring(UsesComboPoints())
+        .. ", combo points: " .. tostring(GetPoints()))
+    for _, line in ipairs(ns.DamageDebugLines()) do print(line) end
+    print("estimate now: " .. tostring(ns.EstimateDamage(GetPoints())))
+
+    if not UnitExists("target") then
+        print("target: none")
+        return
+    end
+    print(string.format("target: valid=%s, player=%s, health=%s/%s",
+        tostring(TargetIsValid() and true or false), tostring(UnitIsPlayer("target")),
+        tostring(UnitHealth("target")), tostring(UnitHealthMax("target"))))
+    local plate = C_NamePlate.GetNamePlateForUnit("target")
+    if not plate then
+        print("nameplate: |cffff5555not found|r (are enemy nameplates on?)")
+        return
+    end
+    local bar = GetHealthBar(plate)
+    print(string.format("nameplate: yes, UnitFrame=%s, health bar=%s, bar width=%s",
+        tostring(plate.UnitFrame ~= nil), tostring(bar ~= nil),
+        tostring(bar and math.floor(bar:GetWidth() + 0.5))))
+    if bar then
+        print(string.format("levels: plate=%d (%s), bar=%d (%s), overlay=%d (%s)",
+            plate:GetFrameLevel(), plate:GetFrameStrata(),
+            bar:GetFrameLevel(), bar:GetFrameStrata(),
+            overlay:GetFrameLevel(), overlay:GetFrameStrata()))
+    end
+    print(string.format("overlay shown: %s, width: %s",
+        tostring(overlay:IsShown()), tostring(math.floor(overlay:GetWidth() + 0.5))))
+end
+
+---------------------------------------------------------------------------
 -- Slash commands: /ncp
 ---------------------------------------------------------------------------
 
@@ -433,6 +476,9 @@ SlashCmdList.NAMEPLATECOMBOS = function(input)
         db.showEmpty = not db.showEmpty
     elseif cmd == "overlay" then
         db.overlay = not db.overlay
+    elseif cmd == "debug" then
+        ns.PrintDebug()
+        return
     elseif cmd == "minimap" then
         db.minimap.hide = not db.minimap.hide
         ns.UpdateMinimapButton()
@@ -447,6 +493,7 @@ SlashCmdList.NAMEPLATECOMBOS = function(input)
         print("  /ncp y <number>     - vertical offset (negative = lower)")
         print("  /ncp empty          - toggle showing empty pips")
         print("  /ncp overlay        - toggle the finisher damage overlay")
+        print("  /ncp debug          - show why the overlay is or isn't showing")
         print("  /ncp minimap        - toggle the minimap button")
         print("  /ncp reset          - restore defaults")
         return

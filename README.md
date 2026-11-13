@@ -81,6 +81,7 @@ Drag the minimap button to move it around the minimap.
 /ncp y <number>      vertical offset (negative = lower)
 /ncp empty           toggle showing empty pips
 /ncp overlay         toggle the finisher damage overlay
+/ncp debug           show why the overlay is or isn't showing
 /ncp minimap         toggle the minimap button
 /ncp reset           restore defaults
 ```
@@ -96,6 +97,7 @@ Drag the minimap button to move it around the minimap.
   Put the last number it prints on the `## Interface:` line, or tick **Load out of date AddOns** in the AddOns list.
 - **Nothing shows:** check that enemy nameplates are on, that you're a Rogue or in Cat Form, and that the target is hostile and alive.
 - **Pips show as solid green squares:** the game can't find the images. Check that `NameplateCombos/media/` exists and restart the game.
+- **Damage overlay doesn't show:** type `/ncp debug` with a target selected and you have combo points. It lists each step the overlay needs (finisher, damage numbers, target health, health bar) so you can see which one is missing.
 - **Lost the minimap button:** type `/ncp` and tick **Show minimap button**.
 
 ## Development

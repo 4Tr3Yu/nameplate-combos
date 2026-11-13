@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.2
+
+### Fixed
+
+- The damage overlay could stay hidden because the finisher's damage numbers couldn't be read. The addon now tries three ways to read the spell's text, and if the text hasn't loaded yet it tries again a couple of seconds later instead of giving up until you learn a new spell.
+- The overlay now draws on top of the health bar the same way the combo points do, so the bar can't cover it.
+
+### New
+
+- `/ncp debug` prints what the overlay is using: tracked finisher, rank, damage numbers found, target health and nameplate details. Include its output when reporting a problem.
+
 ## 1.4.1
 
 ### Fixed

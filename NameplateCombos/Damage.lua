@@ -98,12 +98,37 @@ local function HighestRank(f)
 end
 
 ---------------------------------------------------------------------------
--- Tooltip parsing
+-- Spell text: tried from several sources, since clients differ in which
+-- ones exist and some load spell text in the background.
 ---------------------------------------------------------------------------
+
+local function SplitLines(text, lines)
+    for line in text:gmatch("[^\r\n]+") do lines[#lines + 1] = line end
+    return lines
+end
+
+-- Newer clients: tooltip data without a tooltip frame.
+local function TooltipInfoLines(spellID)
+    if not (C_TooltipInfo and C_TooltipInfo.GetSpellByID) then return nil end
+    local data = C_TooltipInfo.GetSpellByID(spellID)
+    if not (data and data.lines) then return nil end
+    local lines = {}
+    for _, l in ipairs(data.lines) do
+        if l.leftText then SplitLines(l.leftText, lines) end
+    end
+    return lines
+end
+
+local function DescriptionLines(spellID)
+    local text = (C_Spell and C_Spell.GetSpellDescription and C_Spell.GetSpellDescription(spellID))
+        or (GetSpellDescription and GetSpellDescription(spellID))
+    if not text or text == "" then return nil end
+    return SplitLines(text, {})
+end
 
 local scanTip
 
-local function TooltipLines(spellID)
+local function ScanTooltipLines(spellID)
     if not scanTip then
         scanTip = CreateFrame("GameTooltip", ADDON_NAME .. "ScanTooltip", nil, "GameTooltipTemplate")
     end
@@ -116,13 +141,17 @@ local function TooltipLines(spellID)
     for i = 1, scanTip:NumLines() do
         local fs = _G[prefix .. i]
         local text = fs and fs:GetText()
-        if text then
-            for line in text:gmatch("[^\r\n]+") do lines[#lines + 1] = line end
-        end
+        if text then SplitLines(text, lines) end
     end
     scanTip:Hide()
     return lines
 end
+
+local SOURCES = {
+    { name = "tooltip info", fn = TooltipInfoLines },
+    { name = "description", fn = DescriptionLines },
+    { name = "scan tooltip", fn = ScanTooltipLines },
+}
 
 local function ParseDamage(lines)
     local perPoint, energyBonus = {}, nil
@@ -144,31 +173,87 @@ local function ParseDamage(lines)
     return perPoint, energyBonus
 end
 
-local cache = {}
+local RETRY_SECONDS = 2
+local cache = {}      -- finisher key -> data
+local failedAt = {}   -- finisher key -> GetTime() of the last failed lookup
+ns.damageDebug = {}   -- finisher key -> what the last lookup found (/ncp debug)
 
-local function GetData(f)
-    local data = cache[f.key]
-    if data == nil then
-        data = false
-        local id, rank = HighestRank(f)
-        if id then
-            local perPoint, energyBonus = ParseDamage(TooltipLines(id))
+local function Lookup(f)
+    local dbg = { sources = {} }
+    ns.damageDebug[f.key] = dbg
+    local id, rank = HighestRank(f)
+    dbg.id, dbg.rank = id, rank
+    if not id then return nil end
+    if C_Spell and C_Spell.RequestLoadSpellData then C_Spell.RequestLoadSpellData(id) end
+
+    for _, src in ipairs(SOURCES) do
+        local ok, lines = pcall(src.fn, id)
+        if not ok then
+            dbg.sources[#dbg.sources + 1] = src.name .. ": error " .. tostring(lines)
+        elseif not lines then
+            dbg.sources[#dbg.sources + 1] = src.name .. ": not available"
+        else
+            local perPoint, energyBonus = ParseDamage(lines)
             local maxPoint = 0
             for cp in pairs(perPoint) do maxPoint = math.max(maxPoint, cp) end
+            dbg.sources[#dbg.sources + 1] = string.format("%s: %d lines, %d point entries",
+                src.name, #lines, maxPoint)
+            if maxPoint == 0 and #lines > 0 then dbg.sample = lines[#lines] end
             if maxPoint > 0 then
                 local rankText = SpellSubtext(id)
                 if (not rankText or rankText == "") and rank then rankText = "Rank " .. rank end
-                data = { id = id, rankText = rankText, perPoint = perPoint,
+                dbg.source = src.name
+                return { id = id, rankText = rankText, perPoint = perPoint,
                          maxPoint = maxPoint, energyBonus = energyBonus }
             end
         end
-        cache[f.key] = data
     end
-    return data or nil
+end
+
+local function GetData(f)
+    local data = cache[f.key]
+    if data then return data end
+    -- Spell text may still be loading: retry failed lookups every few seconds.
+    if failedAt[f.key] and GetTime() - failedAt[f.key] < RETRY_SECONDS then return nil end
+    data = Lookup(f)
+    if data then
+        cache[f.key], failedAt[f.key] = data, nil
+    else
+        failedAt[f.key] = GetTime()
+    end
+    return data
 end
 
 function ns.InvalidateDamageCache()
     wipe(cache)
+    wipe(failedAt)
+end
+
+-- Lines for /ncp debug.
+function ns.DamageDebugLines()
+    local f = ns.GetTrackedFinisher()
+    if not f then return { "no finishers for this class" } end
+    wipe(failedAt) -- force a fresh lookup now
+    cache[f.key] = nil
+    local data = GetData(f)
+    local dbg = ns.damageDebug[f.key] or {}
+    local out = {
+        string.format("finisher: %s (%s), spell ID: %s, rank: %s",
+            ns.FinisherName(f), f.key, tostring(dbg.id), tostring(dbg.rank)),
+    }
+    for _, s in ipairs(dbg.sources or {}) do out[#out + 1] = "  " .. s end
+    if dbg.sample then out[#out + 1] = "  last line read: " .. dbg.sample end
+    if data then
+        local parts = {}
+        for cp = 1, data.maxPoint do
+            local r = data.perPoint[cp]
+            if r then parts[#parts + 1] = cp .. ":" .. r[1] .. "-" .. r[2] end
+        end
+        out[#out + 1] = "  using " .. tostring(dbg.source) .. " -> " .. table.concat(parts, " ")
+    else
+        out[#out + 1] = "  |cffff5555no damage numbers found|r"
+    end
+    return out
 end
 
 ---------------------------------------------------------------------------
