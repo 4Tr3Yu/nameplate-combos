@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.0
+
+### Changed
+
+- **The finisher damage is now a number** next to the combo points, instead of a bar. It shows your finisher's estimated damage at your current combo points, in yellow, and turns red when the finisher would kill the target.
+- The number is always on and moves with the combo points. The on/off option and `/ncp overlay` were removed, along with the bar's opacity, height and offset options.
+- A grey **?** shows when the damage can't be worked out, instead of showing nothing. `/ncp debug` shows why.
+
 ## 1.5.0
 
 ### Changed

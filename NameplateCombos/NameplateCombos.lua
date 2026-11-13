@@ -10,7 +10,7 @@ if playerClass ~= "ROGUE" and playerClass ~= "DRUID" then
     return -- nothing to do for other classes
 end
 
-local DB_VERSION = 6
+local DB_VERSION = 7
 
 ns.DEFAULTS = {
     size = 10,        -- pip height in pixels (width is 2x)
@@ -26,15 +26,9 @@ ns.DEFAULTS = {
     pulseSpeed = 1.2,     -- seconds per pulse
     colorGlow  = { 1.0, 0.35, 0.1 },
     minimap = { angle = 220, hide = false },
-    -- Finisher damage indicator: a thin bar next to the health bar, on the
-    -- same scale, marking the health the finisher would take off.
-    overlay = true,
-    overlayColor     = { 1.0, 0.85, 0.1 },
+    -- Finisher damage number, shown right of the combo points
+    overlayColor     = { 1.0, 0.85, 0.1 },  -- number color
     overlayKillColor = { 1.0, 0.15, 0.15 }, -- the finisher would kill
-    overlayAlpha = 1,
-    overlayHeight = 3, -- bar thickness in pixels
-    overlayX = 0,      -- horizontal offset from the health bar
-    overlayY = 1,      -- vertical offset from the top of the health bar
     overlayScale = 1,  -- damage adjustment (armor, talents), 0.5 - 1.5
     overlaySpell = { ROGUE = "EVISCERATE", DRUID = "FEROCIOUS_BITE" },
 }
@@ -76,6 +70,15 @@ glowFrame:SetScript("OnUpdate", function(self, elapsed)
     local wave = 0.5 - 0.5 * math.cos(2 * math.pi * pulseTime / period)
     self:SetAlpha(GLOW_MIN_ALPHA + (1 - GLOW_MIN_ALPHA) * wave)
 end)
+
+-- Damage number, right of the pips. Own frame so it can sit above the pips
+-- and glow (levels set in Attach).
+local FONT = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
+local damageFrame = CreateFrame("Frame", nil, container)
+damageFrame:SetAllPoints()
+local damageText = damageFrame:CreateFontString(nil, "OVERLAY")
+damageText:SetFont(FONT, 12, "OUTLINE")
+damageText:SetPoint("LEFT", container, "RIGHT", 4, 0)
 
 ---------------------------------------------------------------------------
 -- Saved variables
@@ -234,63 +237,50 @@ local function Attach(parent, anchor, yOffset)
     container:SetFrameLevel(level)
     glowFrame:SetFrameLevel(level + 1)
     for _, pip in ipairs(pips) do pip:SetFrameLevel(level + 2) end
+    damageFrame:SetFrameLevel(level + 3)
     container:ClearAllPoints()
     container:SetPoint("TOP", anchor, "BOTTOM", 0, yOffset)
 end
 
 ---------------------------------------------------------------------------
--- Damage indicator: its own thin bar, attached to the plate like the combo
--- points (the health bar itself is never touched). It is as wide as the
--- health bar and uses the same scale, so the yellow segment runs from
--- (health - damage) to the current health.
+-- Damage number: the tracked finisher's estimated damage at the current
+-- combo points, shown just right of the pips. "?" means the damage couldn't
+-- be worked out (see /ncp debug).
 ---------------------------------------------------------------------------
 
-local indicator = CreateFrame("Frame", nil, UIParent)
-indicator:Hide()
-indicator.fill = indicator:CreateTexture(nil, "OVERLAY")
+local UNKNOWN_COLOR = { 0.6, 0.6, 0.6 }
 
-local function DrawIndicator(parent, anchor, health, maxHealth, damage)
-    local db = ns.db
-    local width = anchor and anchor:GetWidth()
-    if not (db.overlay and damage and damage > 0 and health and health > 0
-            and maxHealth and maxHealth > 0 and width and width > 0) then
-        indicator:Hide()
-        return
-    end
-    health = math.min(health, maxHealth)
-    local right = width * health / maxHealth
-    local left = width * math.max(0, health - damage) / maxHealth
-    if right - left < 1 then left = math.max(0, right - 1) end
-
-    -- Same parenting and layering as the combo points (see Attach).
-    indicator:SetParent(parent)
-    indicator:SetFrameStrata(parent:GetFrameStrata())
-    indicator:SetFrameLevel(parent:GetFrameLevel() + 10)
-    indicator:ClearAllPoints()
-    indicator:SetPoint("BOTTOMLEFT", anchor, "TOPLEFT", db.overlayX, db.overlayY)
-    indicator:SetSize(width, db.overlayHeight)
-
-    local fill = indicator.fill
-    fill:ClearAllPoints()
-    fill:SetPoint("TOPLEFT", indicator, "TOPLEFT", left, 0)
-    fill:SetPoint("BOTTOMLEFT", indicator, "BOTTOMLEFT", left, 0)
-    fill:SetWidth(right - left)
-    local c = (damage >= health) and db.overlayKillColor or db.overlayColor
-    fill:SetColorTexture(c[1], c[2], c[3], db.overlayAlpha)
-    indicator:Show()
+local function SetDamageText(text, color)
+    damageText:SetFont(FONT, math.max(8, math.floor(ns.db.size * 1.2 + 0.5)), "OUTLINE")
+    damageText:SetText(text)
+    damageText:SetTextColor(color[1], color[2], color[3])
 end
 
--- The overlay must never break the combo points: run it protected, and
--- report the first error so it can be fixed.
-local overlayErrorShown = false
+-- health may be nil (unknown), in which case it's never shown as lethal.
+local function PaintDamage(points, damage, health)
+    local db = ns.db
+    if points <= 0 then
+        damageText:SetText("") -- nothing to finish with
+    elseif not damage then
+        SetDamageText("?", UNKNOWN_COLOR)
+    else
+        local lethal = health and health > 0 and damage >= health
+        SetDamageText(tostring(math.floor(damage + 0.5)),
+            lethal and db.overlayKillColor or db.overlayColor)
+    end
+end
 
-local function SafeOverlay(fn)
+-- The damage number must never break the combo points: run it protected,
+-- and report the first error so it can be fixed.
+local damageErrorShown = false
+
+local function SafeDamage(fn)
     local ok, err = pcall(fn)
     if not ok then
-        indicator:Hide()
-        if not overlayErrorShown then
-            overlayErrorShown = true
-            ns.Print("damage indicator error (combo points still work): " .. tostring(err))
+        SetDamageText("?", UNKNOWN_COLOR)
+        if not damageErrorShown then
+            damageErrorShown = true
+            ns.Print("damage number error (combo points still work): " .. tostring(err))
         end
     end
 end
@@ -310,39 +300,31 @@ function ns.Update()
         local points = GetPoints()
         if points == 0 and not db.showEmpty then
             container:Hide()
-        else
-            local maxPoints = GetMaxPoints()
-            Layout(maxPoints)
-            Attach(plate, GetPlateAnchor(plate), db.yOffset)
-            Paint(points, maxPoints)
-            container:Show()
+            return
         end
-        SafeOverlay(function()
-            local health, maxHealth = TargetHealth()
-            DrawIndicator(plate, GetPlateAnchor(plate), health, maxHealth,
-                health and ns.EstimateDamage(points))
+        local maxPoints = GetMaxPoints()
+        Layout(maxPoints)
+        Attach(plate, GetPlateAnchor(plate), db.yOffset)
+        Paint(points, maxPoints)
+        SafeDamage(function()
+            PaintDamage(points, ns.EstimateDamage(points), (TargetHealth()))
         end)
+        container:Show()
     elseif ns.previewAnchor and ns.previewAnchor:IsVisible() then
         -- Options panel is open and there's no target: show a sample under a
         -- fake health bar.
         local points = ns.previewPoints or PREVIEW_POINTS
-        local bar = ns.previewHealthBar
         Layout(5)
-        Attach(ns.previewAnchor, bar, db.yOffset)
+        Attach(ns.previewAnchor, ns.previewHealthBar, db.yOffset)
         Paint(points, 5)
-        container:Show()
-        SafeOverlay(function()
-            -- Fake target sized so 5 points is lethal and fewer points aren't.
-            local damage, fullDamage = ns.EstimateDamage(points), ns.EstimateDamage(5)
-            if not (damage and fullDamage) then
-                damage, fullDamage = points * 20, 100 -- spell not learned: sample
-            end
-            local maxHealth = fullDamage * 1.6
-            DrawIndicator(ns.previewAnchor, bar, maxHealth * ns.PREVIEW_HEALTH, maxHealth, damage)
+        SafeDamage(function()
+            -- Fake target health: 5 points is lethal, fewer points aren't.
+            local full = ns.EstimateDamage(5)
+            PaintDamage(points, ns.EstimateDamage(points), full and full * 1.6 * ns.PREVIEW_HEALTH)
         end)
+        container:Show()
     else
         container:Hide()
-        indicator:Hide()
     end
 end
 
@@ -377,6 +359,11 @@ events:SetScript("OnEvent", function(_, event, arg1)
             -- bar; the old white, half-transparent defaults don't suit it.
             db.overlayColor, db.overlayAlpha = nil, nil
         end
+        if version < 7 then
+            -- v7 shows a number instead of a bar: drop the bar's settings.
+            db.overlay, db.overlayAlpha, db.overlayHeight = nil, nil, nil
+            db.overlayX, db.overlayY = nil, nil
+        end
         if version < 3 then
             -- v3 trapezoids interlock; the old square spacing is too wide.
             db.spacing = nil
@@ -393,8 +380,6 @@ events:SetScript("OnEvent", function(_, event, arg1)
         -- Our plate is going away; detach so we aren't hidden with it.
         container:SetParent(UIParent)
         container:Hide()
-        indicator:SetParent(UIParent)
-        indicator:Hide()
         return
     end
 
@@ -423,16 +408,14 @@ SafeRegister("LEARNED_SPELL_IN_TAB")
 SafeRegister("UPDATE_SHAPESHIFT_FORM")
 
 ---------------------------------------------------------------------------
--- /ncp debug: everything the damage indicator depends on, step by step
+-- /ncp debug: everything the damage number depends on, step by step
 ---------------------------------------------------------------------------
 
 function ns.PrintDebug()
     local db = ns.db
     local version = (C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata)(ADDON_NAME, "Version")
     ns.Print("debug (version " .. tostring(version) .. ")")
-    print(string.format("indicator enabled: %s, opacity: %s, adjust: %s, height: %s, x: %s, y: %s",
-        tostring(db.overlay), tostring(db.overlayAlpha), tostring(db.overlayScale),
-        tostring(db.overlayHeight), tostring(db.overlayX), tostring(db.overlayY)))
+    print("damage adjust: " .. tostring(db.overlayScale))
     print("uses combo points: " .. tostring(UsesComboPoints())
         .. ", combo points: " .. tostring(GetPoints()))
     for _, line in ipairs(ns.DamageDebugLines()) do print(line) end
@@ -454,15 +437,9 @@ function ns.PrintDebug()
     print(string.format("nameplate: yes, UnitFrame=%s, health bar=%s, bar width=%s",
         tostring(plate.UnitFrame ~= nil), tostring(bar ~= nil),
         tostring(bar and math.floor(bar:GetWidth() + 0.5))))
-    if bar then
-        print(string.format("levels: plate=%d (%s), bar=%d (%s), indicator=%d (%s)",
-            plate:GetFrameLevel(), plate:GetFrameStrata(),
-            bar:GetFrameLevel(), bar:GetFrameStrata(),
-            indicator:GetFrameLevel(), indicator:GetFrameStrata()))
-    end
-    print(string.format("indicator shown: %s, bar width: %s, yellow part: %s",
-        tostring(indicator:IsShown()), tostring(math.floor(indicator:GetWidth() + 0.5)),
-        tostring(math.floor(indicator.fill:GetWidth() + 0.5))))
+    print(string.format("combo points shown: %s, damage number: \"%s\" (shown: %s)",
+        tostring(container:IsShown()), tostring(damageText:GetText()),
+        tostring(damageText:IsVisible())))
 end
 
 ---------------------------------------------------------------------------
@@ -490,8 +467,6 @@ SlashCmdList.NAMEPLATECOMBOS = function(input)
         db.yOffset = num
     elseif cmd == "empty" then
         db.showEmpty = not db.showEmpty
-    elseif cmd == "overlay" then
-        db.overlay = not db.overlay
     elseif cmd == "debug" then
         ns.PrintDebug()
         return
@@ -508,8 +483,7 @@ SlashCmdList.NAMEPLATECOMBOS = function(input)
         print("  /ncp spacing <0-10> - gap between pips")
         print("  /ncp y <number>     - vertical offset (negative = lower)")
         print("  /ncp empty          - toggle showing empty pips")
-        print("  /ncp overlay        - toggle the finisher damage indicator")
-        print("  /ncp debug          - show why the indicator is or isn't showing")
+        print("  /ncp debug          - show how the damage number is worked out")
         print("  /ncp minimap        - toggle the minimap button")
         print("  /ncp reset          - restore defaults")
         return

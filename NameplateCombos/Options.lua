@@ -232,7 +232,7 @@ end
 local function CreatePanel()
     panel = CreateFrame("Frame", "NameplateCombosOptions", UIParent,
         BackdropTemplateMixin and "BackdropTemplate" or nil)
-    panel:SetSize(740, 560)
+    panel:SetSize(740, 440)
     panel:SetPoint("CENTER")
     panel:SetFrameStrata("DIALOG")
     panel:SetClampedToScreen(true)
@@ -266,7 +266,7 @@ local function CreatePanel()
     pbg:SetColorTexture(0, 0, 0, 0.35)
     ns.previewAnchor = preview
 
-    -- Fake nameplate health bar for the pips and the damage indicator.
+    -- Fake nameplate health bar for the pips.
     local bar = CreateFrame("StatusBar", nil, preview)
     bar:SetSize(140, 10)
     bar:SetPoint("CENTER", 0, 10)
@@ -351,27 +351,11 @@ local function CreatePanel()
 
     -- Third column -----------------------------------------------------
     column(500)
-    place(CreateLabel(panel, "Damage indicator"), 22)
-    place(CreateCheckbox(panel, "Show finisher damage",
-        function() return db().overlay end,
-        function(v) db().overlay = v end), 28)
+    place(CreateLabel(panel, "Damage number"), 22)
     place(CreateSpellDropdown(panel), 46)
     place(CreateFinisherInfo(panel), 32)
-    place(CreateColorSwatch(panel, "Indicator color", "overlayColor"), 22)
+    place(CreateColorSwatch(panel, "Number color", "overlayColor"), 22)
     place(CreateColorSwatch(panel, "Lethal color", "overlayKillColor"), 30)
-    place(CreateSlider(panel, "Indicator opacity", 0.1, 1, 0.05,
-        function() return db().overlayAlpha end,
-        function(v) db().overlayAlpha = v end,
-        function(v) return math.floor(v * 100 + 0.5) .. "%" end), 38)
-    place(CreateSlider(panel, "Indicator height", 1, 10, 1,
-        function() return db().overlayHeight end,
-        function(v) db().overlayHeight = v end), 38)
-    place(CreateSlider(panel, "Indicator vertical offset", -40, 40, 1,
-        function() return db().overlayY end,
-        function(v) db().overlayY = v end), 38)
-    place(CreateSlider(panel, "Indicator horizontal offset", -50, 50, 1,
-        function() return db().overlayX end,
-        function(v) db().overlayX = v end), 38)
     place(CreateSlider(panel, "Damage adjust (armor, talents)", 0.5, 1.5, 0.05,
         function() return db().overlayScale end,
         function(v) db().overlayScale = v end,
