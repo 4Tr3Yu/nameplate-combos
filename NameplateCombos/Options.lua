@@ -174,6 +174,51 @@ local function CreateCheckbox(parent, label, getter, setter)
     return cb
 end
 
+local function CreateSpellDropdown(parent)
+    local holder = CreateFrame("Frame", nil, parent)
+    holder:SetSize(220, 46)
+
+    local title = CreateLabel(holder, "Tracked finisher", "GameFontHighlightSmall")
+    title:SetPoint("TOPLEFT", 0, 0)
+
+    local dd = CreateFrame("Frame", ADDON_NAME .. "SpellDropdown", holder, "UIDropDownMenuTemplate")
+    dd:SetPoint("TOPLEFT", -16, -12) -- the template has a wide left margin
+    UIDropDownMenu_SetWidth(dd, 180)
+    UIDropDownMenu_Initialize(dd, function(_, level)
+        local tracked = ns.GetTrackedFinisher()
+        for _, f in ipairs(ns.GetFinishers()) do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = ns.FinisherName(f)
+            info.checked = (f == tracked)
+            info.func = function()
+                ns.SetTrackedFinisher(f.key)
+                ns.RefreshOptions()
+                Changed()
+            end
+            UIDropDownMenu_AddButton(info, level)
+        end
+    end)
+
+    function holder:Refresh()
+        UIDropDownMenu_SetText(dd, ns.FinisherName(ns.GetTrackedFinisher()))
+    end
+
+    table.insert(controls, holder)
+    return holder
+end
+
+-- Shows the rank and damage range the overlay is using.
+local function CreateFinisherInfo(parent)
+    local fs = CreateLabel(parent, "", "GameFontHighlightSmall")
+    fs:SetWidth(220)
+    fs:SetJustifyH("LEFT")
+    function fs:Refresh()
+        self:SetText(ns.DescribeTrackedFinisher())
+    end
+    table.insert(controls, fs)
+    return fs
+end
+
 ---------------------------------------------------------------------------
 -- Panel
 ---------------------------------------------------------------------------
@@ -186,7 +231,7 @@ end
 local function CreatePanel()
     panel = CreateFrame("Frame", "NameplateCombosOptions", UIParent,
         BackdropTemplateMixin and "BackdropTemplate" or nil)
-    panel:SetSize(500, 420)
+    panel:SetSize(740, 440)
     panel:SetPoint("CENTER")
     panel:SetFrameStrata("DIALOG")
     panel:SetClampedToScreen(true)
@@ -213,12 +258,25 @@ local function CreatePanel()
     -- Preview strip (used when you have no target). It counts up from 0 to
     -- max and holds there so you can see the max-combo glow.
     local preview = CreateFrame("Frame", nil, panel)
-    preview:SetSize(460, 40)
+    preview:SetSize(700, 56)
     preview:SetPoint("TOP", 0, -44)
     local pbg = preview:CreateTexture(nil, "BACKGROUND")
     pbg:SetAllPoints()
     pbg:SetColorTexture(0, 0, 0, 0.35)
     ns.previewAnchor = preview
+
+    -- Fake nameplate health bar for the pips and the damage overlay.
+    local bar = CreateFrame("StatusBar", nil, preview)
+    bar:SetSize(140, 10)
+    bar:SetPoint("CENTER", 0, 10)
+    bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    bar:SetStatusBarColor(0.8, 0.1, 0.1)
+    bar:SetMinMaxValues(0, 1)
+    bar:SetValue(ns.PREVIEW_HEALTH)
+    local barBg = bar:CreateTexture(nil, "BACKGROUND")
+    barBg:SetAllPoints()
+    barBg:SetColorTexture(0, 0, 0, 0.7)
+    ns.previewHealthBar = bar
 
     local STEP_TIME, HOLD_TIME, PREVIEW_MAX = 0.45, 3, 5
     local previewClock = 0
@@ -234,7 +292,7 @@ local function CreatePanel()
     local db = function() return ns.db end
     local x, y
     local function column(cx)
-        x, y = cx, -100
+        x, y = cx, -112
     end
     local function place(w, h)
         w:SetPoint("TOPLEFT", x, y)
@@ -289,6 +347,25 @@ local function CreatePanel()
             ns.UpdateMinimapButton()
             if not v then ns.Print("minimap button hidden — type /ncp to open options") end
         end), 26)
+
+    -- Third column -----------------------------------------------------
+    column(500)
+    place(CreateLabel(panel, "Damage overlay"), 22)
+    place(CreateCheckbox(panel, "Show finisher damage",
+        function() return db().overlay end,
+        function(v) db().overlay = v end), 28)
+    place(CreateSpellDropdown(panel), 46)
+    place(CreateFinisherInfo(panel), 32)
+    place(CreateColorSwatch(panel, "Overlay color", "overlayColor"), 22)
+    place(CreateColorSwatch(panel, "Lethal color", "overlayKillColor"), 30)
+    place(CreateSlider(panel, "Overlay opacity", 0.1, 1, 0.05,
+        function() return db().overlayAlpha end,
+        function(v) db().overlayAlpha = v end,
+        function(v) return math.floor(v * 100 + 0.5) .. "%" end), 38)
+    place(CreateSlider(panel, "Damage adjust (armor, talents)", 0.5, 1.5, 0.05,
+        function() return db().overlayScale end,
+        function(v) db().overlayScale = v end,
+        function(v) return math.floor(v * 100 + 0.5) .. "%" end), 38)
 
     local reset = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
     reset:SetSize(120, 22)

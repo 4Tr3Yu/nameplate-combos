@@ -17,6 +17,7 @@ At max combo points the bar glows (pulsing by default):
 - Combo points sit directly under the target's health bar and follow the nameplate.
 - Interlocking trapezoid pips that form one continuous bar.
 - Different color at max combo points, plus an optional glow or pulse.
+- Damage overlay: a strip on the target's health bar shows roughly how much health your finisher would take off at your current combo points. It turns red when the finisher would kill.
 - Shows only for attackable, living targets. For druids, only in Cat Form.
 - Options panel with a live preview, opened from a minimap button or `/ncp`.
 - Settings are saved per character.
@@ -54,6 +55,20 @@ Target an enemy as a Rogue or in Cat Form. The pips appear under its nameplate.
 | Appearance | Opacity, height, spacing, vertical offset |
 | Max combo points | Glow on/off, pulse or steady, pulse duration, glow color |
 | General | Show empty pips, show minimap button |
+| Damage overlay | On/off, tracked finisher, overlay and lethal colors, opacity, damage adjust |
+
+### Damage overlay
+
+The overlay tracks one finisher, picked in the options panel:
+
+| Class | Finishers (default first) |
+|---|---|
+| Rogue | Eviscerate, Rupture |
+| Druid (Cat Form) | Ferocious Bite, Rip |
+
+It uses the highest rank you know and reads the damage per combo point from that rank's tooltip, so it updates as you learn new ranks. The panel shows which rank and damage range it's using.
+
+The number is an estimate: the average of the tooltip's damage range. Ferocious Bite also adds the bonus from your energy above its cost. Rupture and Rip show their total damage over the full duration. Armor, talents, crits and attack power aren't counted, so use **Damage adjust** to scale it up or down. It doesn't show on enemy players whose health is only reported as a percentage.
 
 Drag the minimap button to move it around the minimap.
 
@@ -65,6 +80,7 @@ Drag the minimap button to move it around the minimap.
 /ncp spacing <0-10>  gap between pips
 /ncp y <number>      vertical offset (negative = lower)
 /ncp empty           toggle showing empty pips
+/ncp overlay         toggle the finisher damage overlay
 /ncp minimap         toggle the minimap button
 /ncp reset           restore defaults
 ```

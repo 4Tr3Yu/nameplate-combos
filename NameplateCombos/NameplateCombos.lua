@@ -10,7 +10,7 @@ if playerClass ~= "ROGUE" and playerClass ~= "DRUID" then
     return -- nothing to do for other classes
 end
 
-local DB_VERSION = 4
+local DB_VERSION = 5
 
 ns.DEFAULTS = {
     size = 10,        -- pip height in pixels (width is 2x)
@@ -26,6 +26,13 @@ ns.DEFAULTS = {
     pulseSpeed = 1.2,     -- seconds per pulse
     colorGlow  = { 1.0, 0.35, 0.1 },
     minimap = { angle = 220, hide = false },
+    -- Finisher damage overlay on the target's health bar
+    overlay = true,
+    overlayColor     = { 1.0, 1.0, 1.0 },
+    overlayKillColor = { 1.0, 0.15, 0.15 }, -- the finisher would kill
+    overlayAlpha = 0.55,
+    overlayScale = 1,  -- damage adjustment (armor, talents), 0.5 - 1.5
+    overlaySpell = { ROGUE = "EVISCERATE", DRUID = "FEROCIOUS_BITE" },
 }
 
 local EMPTY_ALPHA = 0.8
@@ -44,6 +51,7 @@ local PIP_ASPECT = 2          -- width / height
 local SLANT_RATIO = 12 / 64   -- slant as a fraction of pip width
 local CAT_FORM_ID = 1 -- GetShapeshiftFormID() for Cat Form
 local PREVIEW_POINTS = 3
+ns.PREVIEW_HEALTH = 0.6 -- fake target health in the options preview
 
 local container = CreateFrame("Frame", ADDON_NAME .. "Frame", UIParent)
 container:Hide()
@@ -126,12 +134,21 @@ end
 
 -- The health bar is the visible part of the plate; anchoring to it (instead
 -- of the whole plate frame) keeps the pips tight under the bar.
-local function GetPlateAnchor(plate)
+local function GetHealthBar(plate)
     local uf = plate.UnitFrame
-    if uf then
-        return uf.healthBar or uf.HealthBar or uf
-    end
-    return plate
+    return uf and (uf.healthBar or uf.HealthBar)
+end
+
+local function GetPlateAnchor(plate)
+    return GetHealthBar(plate) or plate.UnitFrame or plate
+end
+
+-- Enemy players may only report health as a percentage, which can't be
+-- compared with damage numbers.
+local function TargetHealth()
+    local health, maxHealth = UnitHealth("target"), UnitHealthMax("target")
+    if UnitIsPlayer("target") and maxHealth == 100 then return nil end
+    return health, maxHealth
 end
 
 ---------------------------------------------------------------------------
@@ -218,6 +235,41 @@ local function Attach(parent, anchor, yOffset)
 end
 
 ---------------------------------------------------------------------------
+-- Damage overlay: covers the part of the health bar the tracked finisher
+-- would remove, ending at the current health.
+---------------------------------------------------------------------------
+
+local overlay = CreateFrame("Frame", nil, UIParent)
+overlay:Hide()
+overlay.tex = overlay:CreateTexture(nil, "OVERLAY")
+overlay.tex:SetAllPoints()
+
+local function UpdateOverlay(parent, bar, health, maxHealth, damage)
+    local db = ns.db
+    local width = bar and bar:GetWidth()
+    if not (db.overlay and damage and damage > 0 and health and health > 0
+            and maxHealth and maxHealth > 0 and width and width > 0) then
+        overlay:Hide()
+        return
+    end
+    health = math.min(health, maxHealth)
+    local right = width * health / maxHealth
+    local left = width * math.max(0, health - damage) / maxHealth
+    if right - left < 1 then left = math.max(0, right - 1) end
+
+    overlay:SetParent(parent)
+    overlay:SetFrameStrata(parent:GetFrameStrata())
+    overlay:SetFrameLevel(bar:GetFrameLevel() + 2)
+    overlay:ClearAllPoints()
+    overlay:SetPoint("TOPLEFT", bar, "TOPLEFT", left, 0)
+    overlay:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", left, 0)
+    overlay:SetWidth(right - left)
+    local c = (damage >= health) and db.overlayKillColor or db.overlayColor
+    overlay.tex:SetColorTexture(c[1], c[2], c[3], db.overlayAlpha)
+    overlay:Show()
+end
+
+---------------------------------------------------------------------------
 -- Update
 ---------------------------------------------------------------------------
 
@@ -230,6 +282,9 @@ function ns.Update()
 
     if plate then
         local points = GetPoints()
+        local health, maxHealth = TargetHealth()
+        UpdateOverlay(plate, GetHealthBar(plate), health, maxHealth,
+            health and ns.EstimateDamage(points))
         if points == 0 and not db.showEmpty then
             container:Hide()
             return
@@ -240,15 +295,24 @@ function ns.Update()
         Paint(points, maxPoints)
         container:Show()
     elseif ns.previewAnchor and ns.previewAnchor:IsVisible() then
-        -- Options panel is open and there's no target: show a sample.
+        -- Options panel is open and there's no target: show a sample under a
+        -- fake health bar.
+        local points = ns.previewPoints or PREVIEW_POINTS
+        local bar = ns.previewHealthBar
         Layout(5)
-        Attach(ns.previewAnchor, ns.previewAnchor, 0)
-        container:ClearAllPoints()
-        container:SetPoint("CENTER", ns.previewAnchor, "CENTER")
-        Paint(ns.previewPoints or PREVIEW_POINTS, 5)
+        Attach(ns.previewAnchor, bar, db.yOffset)
+        Paint(points, 5)
         container:Show()
+        -- Fake target sized so 5 points is lethal and fewer points aren't.
+        local damage, fullDamage = ns.EstimateDamage(points), ns.EstimateDamage(5)
+        if not (damage and fullDamage) then
+            damage, fullDamage = points * 20, 100 -- spell not learned: sample
+        end
+        local maxHealth = fullDamage * 1.6
+        UpdateOverlay(ns.previewAnchor, bar, maxHealth * ns.PREVIEW_HEALTH, maxHealth, damage)
     else
         container:Hide()
+        overlay:Hide()
     end
 end
 
@@ -277,7 +341,7 @@ events:SetScript("OnEvent", function(_, event, arg1)
             -- v2 anchors to the health bar; old offset no longer applies.
             db.yOffset = nil
         end
-        -- (v4 only adds glow settings; defaults fill them in)
+        -- (v4 adds glow settings, v5 the damage overlay; defaults fill them in)
         if version < 3 then
             -- v3 trapezoids interlock; the old square spacing is too wide.
             db.spacing = nil
@@ -294,7 +358,13 @@ events:SetScript("OnEvent", function(_, event, arg1)
         -- Our plate is going away; detach so we aren't hidden with it.
         container:SetParent(UIParent)
         container:Hide()
+        overlay:SetParent(UIParent)
+        overlay:Hide()
         return
+    end
+
+    if event == "SPELLS_CHANGED" or event == "LEARNED_SPELL_IN_TAB" then
+        ns.InvalidateDamageCache() -- may have learned a new rank
     end
 
     ns.Update()
@@ -311,6 +381,10 @@ SafeRegister("UNIT_MAXPOWER", "player")
 SafeRegister("PLAYER_COMBO_POINTS")
 SafeRegister("UNIT_FLAGS", "target")
 SafeRegister("UNIT_HEALTH", "target")
+SafeRegister("UNIT_HEALTH_FREQUENT", "target")
+SafeRegister("UNIT_MAXHEALTH", "target")
+SafeRegister("SPELLS_CHANGED")
+SafeRegister("LEARNED_SPELL_IN_TAB")
 SafeRegister("UPDATE_SHAPESHIFT_FORM")
 
 ---------------------------------------------------------------------------
@@ -338,6 +412,8 @@ SlashCmdList.NAMEPLATECOMBOS = function(input)
         db.yOffset = num
     elseif cmd == "empty" then
         db.showEmpty = not db.showEmpty
+    elseif cmd == "overlay" then
+        db.overlay = not db.overlay
     elseif cmd == "minimap" then
         db.minimap.hide = not db.minimap.hide
         ns.UpdateMinimapButton()
@@ -351,6 +427,7 @@ SlashCmdList.NAMEPLATECOMBOS = function(input)
         print("  /ncp spacing <0-10> - gap between pips")
         print("  /ncp y <number>     - vertical offset (negative = lower)")
         print("  /ncp empty          - toggle showing empty pips")
+        print("  /ncp overlay        - toggle the finisher damage overlay")
         print("  /ncp minimap        - toggle the minimap button")
         print("  /ncp reset          - restore defaults")
         return
