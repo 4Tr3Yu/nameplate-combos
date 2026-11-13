@@ -411,35 +411,92 @@ SafeRegister("UPDATE_SHAPESHIFT_FORM")
 -- /ncp debug: everything the damage number depends on, step by step
 ---------------------------------------------------------------------------
 
+-- WoW chat can't be copied, so the debug output also goes into a small
+-- window with the text selected, ready for Ctrl+C.
+local copyFrame
+
+local function ShowCopyWindow(text)
+    if not copyFrame then
+        copyFrame = CreateFrame("Frame", "NameplateCombosCopyFrame", UIParent,
+            BackdropTemplateMixin and "BackdropTemplate" or nil)
+        copyFrame:SetSize(560, 320)
+        copyFrame:SetPoint("CENTER")
+        copyFrame:SetFrameStrata("FULLSCREEN_DIALOG")
+        copyFrame:EnableMouse(true)
+        copyFrame:SetMovable(true)
+        copyFrame:RegisterForDrag("LeftButton")
+        copyFrame:SetScript("OnDragStart", copyFrame.StartMoving)
+        copyFrame:SetScript("OnDragStop", copyFrame.StopMovingOrSizing)
+        if copyFrame.SetBackdrop then
+            copyFrame:SetBackdrop({
+                bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+                edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+                tile = true, tileSize = 32, edgeSize = 24,
+                insets = { left = 6, right = 6, top = 6, bottom = 6 },
+            })
+        end
+        table.insert(UISpecialFrames, copyFrame:GetName()) -- close with Escape
+
+        local title = copyFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOP", 0, -14)
+        title:SetText("Nameplate Combos debug - press Ctrl+C to copy, Escape to close")
+
+        local close = CreateFrame("Button", nil, copyFrame, "UIPanelCloseButton")
+        close:SetPoint("TOPRIGHT", -4, -4)
+
+        local scroll = CreateFrame("ScrollFrame", nil, copyFrame, "UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT", 16, -36)
+        scroll:SetPoint("BOTTOMRIGHT", -34, 16)
+
+        local edit = CreateFrame("EditBox", nil, scroll)
+        edit:SetMultiLine(true)
+        edit:SetAutoFocus(false)
+        edit:SetFontObject("ChatFontNormal")
+        edit:SetWidth(500)
+        edit:SetScript("OnEscapePressed", function() copyFrame:Hide() end)
+        scroll:SetScrollChild(edit)
+        copyFrame.edit = edit
+    end
+    copyFrame.edit:SetText(text)
+    copyFrame:Show()
+    copyFrame.edit:SetFocus()
+    copyFrame.edit:HighlightText()
+end
+
 function ns.PrintDebug()
     local db = ns.db
-    local version = (C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata)(ADDON_NAME, "Version")
-    ns.Print("debug (version " .. tostring(version) .. ")")
-    print("damage adjust: " .. tostring(db.overlayScale))
-    print("uses combo points: " .. tostring(UsesComboPoints())
+    local out = {}
+    local function add(s) out[#out + 1] = s end
+
+    local GetMeta = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
+    add("version: " .. tostring(GetMeta and GetMeta(ADDON_NAME, "Version"))
+        .. ", client: " .. table.concat({ GetBuildInfo() }, " | "))
+    add("class: " .. playerClass .. ", damage adjust: " .. tostring(db.overlayScale))
+    add("uses combo points: " .. tostring(UsesComboPoints())
         .. ", combo points: " .. tostring(GetPoints()))
-    for _, line in ipairs(ns.DamageDebugLines()) do print(line) end
-    print("estimate now: " .. tostring(ns.EstimateDamage(GetPoints())))
+    for _, line in ipairs(ns.DamageDebugLines()) do add(line) end
+    add("estimate now: " .. tostring(ns.EstimateDamage(GetPoints())))
 
     if not UnitExists("target") then
-        print("target: none")
-        return
+        add("target: none")
+    else
+        add(string.format("target: valid=%s, player=%s, health=%s/%s",
+            tostring(TargetIsValid() and true or false), tostring(UnitIsPlayer("target")),
+            tostring(UnitHealth("target")), tostring(UnitHealthMax("target"))))
+        local plate = C_NamePlate.GetNamePlateForUnit("target")
+        if plate then
+            add(string.format("combo points shown: %s, damage number: \"%s\"",
+                tostring(container:IsShown()), tostring(damageText:GetText())))
+        else
+            add("nameplate: not found (are enemy nameplates on?)")
+        end
     end
-    print(string.format("target: valid=%s, player=%s, health=%s/%s",
-        tostring(TargetIsValid() and true or false), tostring(UnitIsPlayer("target")),
-        tostring(UnitHealth("target")), tostring(UnitHealthMax("target"))))
-    local plate = C_NamePlate.GetNamePlateForUnit("target")
-    if not plate then
-        print("nameplate: |cffff5555not found|r (are enemy nameplates on?)")
-        return
-    end
-    local bar = GetHealthBar(plate)
-    print(string.format("nameplate: yes, UnitFrame=%s, health bar=%s, bar width=%s",
-        tostring(plate.UnitFrame ~= nil), tostring(bar ~= nil),
-        tostring(bar and math.floor(bar:GetWidth() + 0.5))))
-    print(string.format("combo points shown: %s, damage number: \"%s\" (shown: %s)",
-        tostring(container:IsShown()), tostring(damageText:GetText()),
-        tostring(damageText:IsVisible())))
+
+    ns.Print("debug")
+    for _, line in ipairs(out) do print(line) end
+    -- Strip color codes for the copy window.
+    local plain = table.concat(out, "\n"):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    ShowCopyWindow(plain)
 end
 
 ---------------------------------------------------------------------------

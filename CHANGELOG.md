@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.1
+
+### Changed
+
+- `/ncp debug` now opens a small window with its output already selected, so you can copy it with Ctrl+C (chat text can't be copied).
+- When the damage can't be worked out, `/ncp debug` now shows which spell ranks your character knows and the full spell text it read, to make the cause easier to find.
+
 ## 1.6.0
 
 ### Changed

@@ -183,7 +183,16 @@ local function Lookup(f)
     ns.damageDebug[f.key] = dbg
     local id, rank = HighestRank(f)
     dbg.id, dbg.rank = id, rank
-    if not id then return nil end
+    if not id then
+        -- Record what was checked, for /ncp debug.
+        local known = {}
+        for _, rid in ipairs(f.ranks) do
+            known[#known + 1] = rid .. "=" .. (Knows(rid) and "yes" or "no")
+        end
+        dbg.checked = table.concat(known, " ")
+        dbg.byName = tostring(SpellIDByName(ns.FinisherName(f)))
+        return nil
+    end
     if C_Spell and C_Spell.RequestLoadSpellData then C_Spell.RequestLoadSpellData(id) end
 
     for _, src in ipairs(SOURCES) do
@@ -198,7 +207,7 @@ local function Lookup(f)
             for cp in pairs(perPoint) do maxPoint = math.max(maxPoint, cp) end
             dbg.sources[#dbg.sources + 1] = string.format("%s: %d lines, %d point entries",
                 src.name, #lines, maxPoint)
-            if maxPoint == 0 and #lines > 0 then dbg.sample = lines[#lines] end
+            if maxPoint == 0 and #lines > #(dbg.lines or {}) then dbg.lines = lines end
             if maxPoint > 0 then
                 local rankText = SpellSubtext(id)
                 if (not rankText or rankText == "") and rank then rankText = "Rank " .. rank end
@@ -241,8 +250,15 @@ function ns.DamageDebugLines()
         string.format("finisher: %s (%s), spell ID: %s, rank: %s",
             ns.FinisherName(f), f.key, tostring(dbg.id), tostring(dbg.rank)),
     }
+    if dbg.checked then
+        out[#out + 1] = "  rank IDs known: " .. dbg.checked
+        out[#out + 1] = "  lookup by name '" .. ns.FinisherName(f) .. "': " .. dbg.byName
+    end
     for _, s in ipairs(dbg.sources or {}) do out[#out + 1] = "  " .. s end
-    if dbg.sample then out[#out + 1] = "  last line read: " .. dbg.sample end
+    if not data and dbg.lines then
+        out[#out + 1] = "  spell text read (no '<n> point(s): <damage>' lines found):"
+        for i = 1, math.min(#dbg.lines, 25) do out[#out + 1] = "    | " .. dbg.lines[i] end
+    end
     if data then
         local parts = {}
         for cp = 1, data.maxPoint do
