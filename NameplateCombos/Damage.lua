@@ -173,8 +173,21 @@ local function ParseDamage(lines)
     return perPoint, energyBonus
 end
 
+-- Newer clients hide some values from addons during combat ("secret"
+-- values); doing math with or comparing one errors. Treat them as unknown.
+local function Usable(v)
+    if v == nil then return false end
+    if issecretvalue and issecretvalue(v) then return false end
+    return true
+end
+ns.Usable = Usable
+
 local RETRY_SECONDS = 2
+-- The damage table is read out of combat (login, spell changes, leaving
+-- combat) and kept: a lookup that fails, e.g. because spell text is hidden
+-- during combat, never replaces data that worked before.
 local cache = {}      -- finisher key -> data
+local stale = {}      -- finisher key -> true: re-read when possible
 local failedAt = {}   -- finisher key -> GetTime() of the last failed lookup
 ns.damageDebug = {}   -- finisher key -> what the last lookup found (/ncp debug)
 
@@ -197,12 +210,16 @@ local function Lookup(f)
 
     for _, src in ipairs(SOURCES) do
         local ok, lines = pcall(src.fn, id)
+        local parsed, perPoint, energyBonus
+        if ok and lines then
+            parsed, perPoint, energyBonus = pcall(ParseDamage, lines)
+            if not parsed then ok, lines = false, perPoint end -- parse error message
+        end
         if not ok then
             dbg.sources[#dbg.sources + 1] = src.name .. ": error " .. tostring(lines)
         elseif not lines then
             dbg.sources[#dbg.sources + 1] = src.name .. ": not available"
         else
-            local perPoint, energyBonus = ParseDamage(lines)
             local maxPoint = 0
             for cp in pairs(perPoint) do maxPoint = math.max(maxPoint, cp) end
             dbg.sources[#dbg.sources + 1] = string.format("%s: %d lines, %d point entries",
@@ -210,7 +227,9 @@ local function Lookup(f)
             if maxPoint == 0 and #lines > #(dbg.lines or {}) then dbg.lines = lines end
             if maxPoint > 0 then
                 local rankText = SpellSubtext(id)
-                if (not rankText or rankText == "") and rank then rankText = "Rank " .. rank end
+                if not Usable(rankText) or rankText == "" then
+                    rankText = rank and ("Rank " .. rank) or nil
+                end
                 dbg.source = src.name
                 return { id = id, rankText = rankText, perPoint = perPoint,
                          maxPoint = maxPoint, energyBonus = energyBonus }
@@ -221,43 +240,54 @@ end
 
 local function GetData(f)
     local data = cache[f.key]
-    if data then return data end
+    if data and not stale[f.key] then return data end
     -- Spell text may still be loading: retry failed lookups every few seconds.
-    if failedAt[f.key] and GetTime() - failedAt[f.key] < RETRY_SECONDS then return nil end
-    data = Lookup(f)
-    if data then
-        cache[f.key], failedAt[f.key] = data, nil
+    if failedAt[f.key] and GetTime() - failedAt[f.key] < RETRY_SECONDS then return data end
+    local fresh = Lookup(f)
+    if fresh then
+        cache[f.key], stale[f.key], failedAt[f.key] = fresh, nil, nil
     else
         failedAt[f.key] = GetTime()
     end
-    return data
+    return cache[f.key] -- the old data if the fresh lookup failed
 end
 
+-- Spells changed (new rank, or just a shapeshift): re-read when possible,
+-- but keep the current numbers until then.
 function ns.InvalidateDamageCache()
-    wipe(cache)
+    for key in pairs(cache) do stale[key] = true end
     wipe(failedAt)
+end
+
+-- Read every finisher of the class now. Called out of combat.
+function ns.WarmDamageCache()
+    for _, f in ipairs(ns.GetFinishers()) do GetData(f) end
 end
 
 -- Lines for /ncp debug.
 function ns.DamageDebugLines()
     local f = ns.GetTrackedFinisher()
     if not f then return { "no finishers for this class" } end
-    wipe(failedAt) -- force a fresh lookup now
-    cache[f.key] = nil
-    local data = GetData(f)
+    -- Fresh lookup for the report; only stored if it worked.
+    local fresh = Lookup(f)
+    if fresh then cache[f.key], stale[f.key], failedAt[f.key] = fresh, nil, nil end
+    local data = cache[f.key]
     local dbg = ns.damageDebug[f.key] or {}
     local out = {
-        string.format("finisher: %s (%s), spell ID: %s, rank: %s",
-            ns.FinisherName(f), f.key, tostring(dbg.id), tostring(dbg.rank)),
+        string.format("finisher: %s (%s), spell ID: %s, rank: %s, in combat: %s",
+            ns.FinisherName(f), f.key, tostring(dbg.id), tostring(dbg.rank),
+            tostring(InCombatLockdown and InCombatLockdown() or false)),
     }
     if dbg.checked then
         out[#out + 1] = "  rank IDs known: " .. dbg.checked
         out[#out + 1] = "  lookup by name '" .. ns.FinisherName(f) .. "': " .. dbg.byName
     end
     for _, s in ipairs(dbg.sources or {}) do out[#out + 1] = "  " .. s end
-    if not data and dbg.lines then
+    if not fresh and dbg.lines then
         out[#out + 1] = "  spell text read (no '<n> point(s): <damage>' lines found):"
-        for i = 1, math.min(#dbg.lines, 25) do out[#out + 1] = "    | " .. dbg.lines[i] end
+        for i = 1, math.min(#dbg.lines, 25) do
+            out[#out + 1] = "    | " .. (Usable(dbg.lines[i]) and dbg.lines[i] or "(hidden)")
+        end
     end
     if data then
         local parts = {}
@@ -265,7 +295,9 @@ function ns.DamageDebugLines()
             local r = data.perPoint[cp]
             if r then parts[#parts + 1] = cp .. ":" .. r[1] .. "-" .. r[2] end
         end
-        out[#out + 1] = "  using " .. tostring(dbg.source) .. " -> " .. table.concat(parts, " ")
+        out[#out + 1] = (fresh and "  using " .. tostring(dbg.source) or "  using saved numbers")
+            .. " -> " .. table.concat(parts, " ")
+            .. (data.energyBonus and (", energy bonus " .. data.energyBonus) or "")
     else
         out[#out + 1] = "  |cffff5555no damage numbers found|r"
     end
@@ -275,6 +307,18 @@ end
 ---------------------------------------------------------------------------
 -- Public
 ---------------------------------------------------------------------------
+
+-- Ferocious Bite: bonus damage from energy above the spell's cost. 0 when
+-- energy is hidden or can't be read.
+local function EnergyBonus(f, data)
+    if not (data.energyBonus and f.energyCost) then return 0 end
+    local ok, bonus = pcall(function()
+        local energy = UnitPower("player", ENERGY)
+        if not Usable(energy) then return 0 end
+        return math.max(0, energy - f.energyCost) * data.energyBonus
+    end)
+    return ok and bonus or 0
+end
 
 -- Average damage of the tracked finisher at the given combo points, after the
 -- user's damage adjustment. nil if the spell isn't known or points is 0.
@@ -289,11 +333,7 @@ function ns.EstimateDamage(points)
         if range then break end
     end
     if not range then return nil end
-    local damage = (range[1] + range[2]) / 2
-    if data.energyBonus and f.energyCost then
-        local energy = UnitPower("player", ENERGY) or 0
-        damage = damage + math.max(0, energy - f.energyCost) * data.energyBonus
-    end
+    local damage = (range[1] + range[2]) / 2 + EnergyBonus(f, data)
     return damage * (ns.db.overlayScale or 1)
 end
 

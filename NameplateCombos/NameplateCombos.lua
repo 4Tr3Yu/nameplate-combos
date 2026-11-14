@@ -152,8 +152,11 @@ end
 
 -- Enemy players may only report health as a percentage, which can't be
 -- compared with damage numbers.
+-- Returns nil when health is unknown: hidden during combat on newer clients,
+-- or only a percentage (enemy players).
 local function TargetHealth()
     local health, maxHealth = UnitHealth("target"), UnitHealthMax("target")
+    if not (ns.Usable(health) and ns.Usable(maxHealth)) then return nil end
     if UnitIsPlayer("target") and maxHealth == 100 then return nil end
     return health, maxHealth
 end
@@ -307,7 +310,10 @@ function ns.Update()
         Attach(plate, GetPlateAnchor(plate), db.yOffset)
         Paint(points, maxPoints)
         SafeDamage(function()
-            PaintDamage(points, ns.EstimateDamage(points), (TargetHealth()))
+            local damage = ns.EstimateDamage(points)
+            -- Health only decides the lethal color; never let it hide the number.
+            local ok, health = pcall(TargetHealth)
+            PaintDamage(points, damage, ok and health or nil)
         end)
         container:Show()
     elseif ns.previewAnchor and ns.previewAnchor:IsVisible() then
@@ -386,6 +392,13 @@ events:SetScript("OnEvent", function(_, event, arg1)
     if event == "SPELLS_CHANGED" or event == "LEARNED_SPELL_IN_TAB" then
         ns.InvalidateDamageCache() -- may have learned a new rank
     end
+    -- Read the finisher damage while out of combat, where spell text is
+    -- always available; the numbers are kept for use during combat.
+    if (event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_REGEN_ENABLED"
+            or event == "SPELLS_CHANGED" or event == "LEARNED_SPELL_IN_TAB")
+            and not (InCombatLockdown and InCombatLockdown()) then
+        pcall(ns.WarmDamageCache)
+    end
 
     ns.Update()
 end)
@@ -404,6 +417,7 @@ SafeRegister("UNIT_HEALTH", "target")
 SafeRegister("UNIT_HEALTH_FREQUENT", "target")
 SafeRegister("UNIT_MAXHEALTH", "target")
 SafeRegister("SPELLS_CHANGED")
+SafeRegister("PLAYER_REGEN_ENABLED")
 SafeRegister("LEARNED_SPELL_IN_TAB")
 SafeRegister("UPDATE_SHAPESHIFT_FORM")
 
@@ -463,10 +477,14 @@ local function ShowCopyWindow(text)
     copyFrame.edit:HighlightText()
 end
 
-function ns.PrintDebug()
+-- tostring that copes with values hidden during combat.
+local function Show(v)
+    if v ~= nil and not ns.Usable(v) then return "(hidden)" end
+    return tostring(v)
+end
+
+local function CollectDebug(add)
     local db = ns.db
-    local out = {}
-    local function add(s) out[#out + 1] = s end
 
     local GetMeta = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
     add("version: " .. tostring(GetMeta and GetMeta(ADDON_NAME, "Version"))
@@ -475,14 +493,15 @@ function ns.PrintDebug()
     add("uses combo points: " .. tostring(UsesComboPoints())
         .. ", combo points: " .. tostring(GetPoints()))
     for _, line in ipairs(ns.DamageDebugLines()) do add(line) end
-    add("estimate now: " .. tostring(ns.EstimateDamage(GetPoints())))
+    add("estimate now: " .. Show(ns.EstimateDamage(GetPoints())))
 
     if not UnitExists("target") then
         add("target: none")
     else
         add(string.format("target: valid=%s, player=%s, health=%s/%s",
             tostring(TargetIsValid() and true or false), tostring(UnitIsPlayer("target")),
-            tostring(UnitHealth("target")), tostring(UnitHealthMax("target"))))
+            Show(UnitHealth("target")), Show(UnitHealthMax("target"))))
+        add("energy: " .. Show(UnitPower("player", 3)))
         local plate = C_NamePlate.GetNamePlateForUnit("target")
         if plate then
             add(string.format("combo points shown: %s, damage number: \"%s\"",
@@ -491,6 +510,14 @@ function ns.PrintDebug()
             add("nameplate: not found (are enemy nameplates on?)")
         end
     end
+end
+
+function ns.PrintDebug()
+    local out = {}
+    local function add(s) out[#out + 1] = s end
+    -- Each step guarded, so a failure still reports everything before it.
+    local ok, err = pcall(CollectDebug, add)
+    if not ok then add("|cffff5555debug stopped with an error:|r " .. tostring(err)) end
 
     ns.Print("debug")
     for _, line in ipairs(out) do print(line) end

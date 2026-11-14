@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.2
+
+### Fixed
+
+- The damage number showed **?** during combat. The game hides some information from addons during combat, so the finisher's damage couldn't be read mid-fight. The damage is now read out of combat (when you log in, learn a spell, or leave combat) and kept for use during combat. Shifting into Cat Form no longer throws it away.
+- If your energy or the target's health is hidden during combat, the number still shows: Ferocious Bite's extra-energy bonus is left out, and the number just won't turn red for a killing blow.
+- `/ncp debug` now works during combat, and shows "(hidden)" for anything the game hides.
+
 ## 1.6.1
 
 ### Changed
