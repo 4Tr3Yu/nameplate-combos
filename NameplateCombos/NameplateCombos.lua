@@ -26,8 +26,11 @@ ns.DEFAULTS = {
     pulseSpeed = 1.2,     -- seconds per pulse
     colorGlow  = { 1.0, 0.35, 0.1 },
     minimap = { angle = 220, hide = false },
-    -- Finisher damage number, shown right of the combo points
-    overlayColor     = { 1.0, 0.85, 0.1 },  -- number color
+    -- Finisher damage: an overlay on the health bar, a number right of the
+    -- combo points, or both ("OVERLAY", "NUMBER", "BOTH")
+    damageDisplay = "OVERLAY",
+    overlayColor     = { 1.0, 0.85, 0.1 },  -- overlay and number color
+    overlayAlpha = 0.6, -- overlay opacity
     overlayKillColor = { 1.0, 0.15, 0.15 }, -- the finisher would kill
     overlayScale = 1,  -- damage adjustment (armor, talents), 0.5 - 1.5
     overlaySpell = { ROGUE = "EVISCERATE", DRUID = "FEROCIOUS_BITE" },
@@ -273,7 +276,79 @@ local function PaintDamage(points, damage, health)
     end
 end
 
--- The damage number must never break the combo points: run it protected,
+---------------------------------------------------------------------------
+-- Damage overlay on the health bar: the part of the bar the finisher would
+-- take off, ending at the current health.
+--
+-- Target health can be hidden from addons during combat, so nothing here
+-- does math with it. The overlay is its own status bar, filled from the
+-- right and anchored to the right edge of the health bar's fill. It takes
+-- the health bar's own range and is given only the damage; the game works
+-- out the size. A clipping frame keeps it inside the health bar.
+---------------------------------------------------------------------------
+
+local overlayClip = CreateFrame("Frame", nil, UIParent)
+overlayClip:Hide()
+if overlayClip.SetClipsChildren then overlayClip:SetClipsChildren(true) end
+local overlayBar = CreateFrame("StatusBar", nil, overlayClip)
+overlayBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+if overlayBar.SetReverseFill then overlayBar:SetReverseFill(true) end
+
+local function HideOverlay()
+    overlayClip:Hide()
+end
+
+-- Returns true if the overlay is drawn.
+local function DrawOverlay(parent, bar, damage, lethal)
+    local db = ns.db
+    local fill = bar and bar.GetStatusBarTexture and bar:GetStatusBarTexture()
+    local width = bar and bar:GetWidth()
+    if not (damage and damage > 0 and fill and width and width > 0) then
+        HideOverlay()
+        return false
+    end
+    -- Same parenting and layering as the combo points (see Attach).
+    overlayClip:SetParent(parent)
+    overlayClip:SetFrameStrata(parent:GetFrameStrata())
+    overlayClip:SetFrameLevel(parent:GetFrameLevel() + 10)
+    overlayClip:ClearAllPoints()
+    overlayClip:SetAllPoints(bar)
+    overlayBar:SetFrameLevel(overlayClip:GetFrameLevel() + 1)
+
+    overlayBar:ClearAllPoints()
+    overlayBar:SetPoint("TOPRIGHT", fill, "TOPRIGHT")
+    overlayBar:SetPoint("BOTTOMRIGHT", fill, "BOTTOMRIGHT")
+    overlayBar:SetWidth(width)
+    overlayBar:SetMinMaxValues(bar:GetMinMaxValues()) -- the health bar's scale
+    overlayBar:SetValue(damage)
+    local c = lethal and db.overlayKillColor or db.overlayColor
+    overlayBar:SetStatusBarColor(c[1], c[2], c[3], db.overlayAlpha)
+    overlayClip:Show()
+    return true
+end
+
+-- Draws the overlay and/or the number, as set in the options. A "?" number
+-- is shown even in overlay mode when the damage is unknown, and the number
+-- stands in when the overlay can't be drawn, so a problem is never silent.
+local function ShowDamage(parent, bar, points, damage, health)
+    local mode = ns.db.damageDisplay
+    local lethal = damage and health and health > 0 and damage >= health
+    local overlayDrawn = false
+    if mode ~= "NUMBER" and points > 0 then
+        local ok, drawn = pcall(DrawOverlay, parent, bar, damage, lethal)
+        overlayDrawn = ok and drawn
+        if not ok then HideOverlay() end
+    else
+        HideOverlay()
+    end
+    if mode == "OVERLAY" and overlayDrawn then
+        damageText:SetText("")
+    else
+        PaintDamage(points, damage, health)
+    end
+end
+
+-- The damage display must never break the combo points: run it protected,
 -- and report the first error so it can be fixed.
 local damageErrorShown = false
 
@@ -281,9 +356,10 @@ local function SafeDamage(fn)
     local ok, err = pcall(fn)
     if not ok then
         SetDamageText("?", UNKNOWN_COLOR)
+        HideOverlay()
         if not damageErrorShown then
             damageErrorShown = true
-            ns.Print("damage number error (combo points still work): " .. tostring(err))
+            ns.Print("damage display error (combo points still work): " .. tostring(err))
         end
     end
 end
@@ -311,9 +387,9 @@ function ns.Update()
         Paint(points, maxPoints)
         SafeDamage(function()
             local damage = ns.EstimateDamage(points)
-            -- Health only decides the lethal color; never let it hide the number.
+            -- Health only decides the lethal color; never let it hide the damage.
             local ok, health = pcall(TargetHealth)
-            PaintDamage(points, damage, ok and health or nil)
+            ShowDamage(plate, GetHealthBar(plate), points, damage, ok and health or nil)
         end)
         container:Show()
     elseif ns.previewAnchor and ns.previewAnchor:IsVisible() then
@@ -324,13 +400,19 @@ function ns.Update()
         Attach(ns.previewAnchor, ns.previewHealthBar, db.yOffset)
         Paint(points, 5)
         SafeDamage(function()
-            -- Fake target health: 5 points is lethal, fewer points aren't.
-            local full = ns.EstimateDamage(5)
-            PaintDamage(points, ns.EstimateDamage(points), full and full * 1.6 * ns.PREVIEW_HEALTH)
+            -- Fake target: 5 points is lethal, fewer points aren't.
+            local damage, full = ns.EstimateDamage(points), ns.EstimateDamage(5)
+            local maxHealth = (full or 100) * 1.6
+            local health = maxHealth * ns.PREVIEW_HEALTH
+            local bar = ns.previewHealthBar
+            bar:SetMinMaxValues(0, maxHealth)
+            bar:SetValue(health)
+            ShowDamage(ns.previewAnchor, bar, points, damage, full and health)
         end)
         container:Show()
     else
         container:Hide()
+        HideOverlay()
     end
 end
 
@@ -386,6 +468,8 @@ events:SetScript("OnEvent", function(_, event, arg1)
         -- Our plate is going away; detach so we aren't hidden with it.
         container:SetParent(UIParent)
         container:Hide()
+        overlayClip:SetParent(UIParent)
+        HideOverlay()
         return
     end
 
@@ -504,8 +588,17 @@ local function CollectDebug(add)
         add("energy: " .. Show(UnitPower("player", 3)))
         local plate = C_NamePlate.GetNamePlateForUnit("target")
         if plate then
+            local bar = GetHealthBar(plate)
+            local fill = bar and bar.GetStatusBarTexture and bar:GetStatusBarTexture()
             add(string.format("combo points shown: %s, damage number: \"%s\"",
                 tostring(container:IsShown()), tostring(damageText:GetText())))
+            add(string.format("show damage as: %s, health bar: %s (width %s), bar fill: %s",
+                tostring(db.damageDisplay), tostring(bar ~= nil),
+                Show(bar and math.floor(bar:GetWidth() + 0.5)), tostring(fill ~= nil)))
+            local fillTex = overlayBar:GetStatusBarTexture()
+            add(string.format("overlay shown: %s, overlay part width: %s",
+                tostring(overlayClip:IsShown()),
+                Show(fillTex and fillTex:GetWidth())))
         else
             add("nameplate: not found (are enemy nameplates on?)")
         end

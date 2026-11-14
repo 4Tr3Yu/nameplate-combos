@@ -17,7 +17,7 @@ At max combo points the bar glows (pulsing by default):
 - Combo points sit directly under the target's health bar and follow the nameplate.
 - Interlocking trapezoid pips that form one continuous bar.
 - Different color at max combo points, plus an optional glow or pulse.
-- Damage number: right of the combo points, the estimated damage of your finisher at your current combo points. It turns red when the finisher would kill.
+- Finisher damage: an overlay on the target's health bar (or a number next to the combo points) showing roughly how much health your finisher would take off at your current combo points. It turns red when the finisher would kill.
 - Shows only for attackable, living targets. For druids, only in Cat Form.
 - Options panel with a live preview, opened from a minimap button or `/ncp`.
 - Settings are saved per character.
@@ -55,11 +55,17 @@ Target an enemy as a Rogue or in Cat Form. The pips appear under its nameplate.
 | Appearance | Opacity, height, spacing, vertical offset |
 | Max combo points | Glow on/off, pulse or steady, pulse duration, glow color |
 | General | Show empty pips, show minimap button |
-| Damage number | Tracked finisher, number and lethal colors, damage adjust |
+| Finisher damage | Show as overlay / number / both, tracked finisher, damage and lethal colors, overlay opacity, damage adjust |
 
-### Damage number
+### Finisher damage
 
-With at least one combo point, a number just right of the combo points shows how much damage your finisher would do. It's yellow, or red when the target has less health left than that. A grey **?** means the damage couldn't be worked out; `/ncp debug` shows why. The number is always on and moves with the combo points.
+With at least one combo point, the addon shows how much damage your finisher would do, in one of three ways (**Show damage as** in the options):
+
+- **Health bar overlay** (default): a yellow strip over the end of the target's health bar, covering the health the finisher would take off.
+- **Number**: the estimated damage just right of the combo points.
+- **Both**.
+
+The overlay and the number turn red when the finisher would kill the target. A grey **?** means the damage couldn't be worked out; `/ncp debug` shows why. If the overlay can't be drawn on a nameplate, the number shows instead.
 
 It tracks one finisher, picked in the options panel:
 
@@ -82,7 +88,7 @@ Drag the minimap button to move it around the minimap.
 /ncp spacing <0-10>  gap between pips
 /ncp y <number>      vertical offset (negative = lower)
 /ncp empty           toggle showing empty pips
-/ncp debug           show how the damage number is worked out
+/ncp debug           show how the finisher damage is worked out
 /ncp minimap         toggle the minimap button
 /ncp reset           restore defaults
 ```
@@ -98,7 +104,7 @@ Drag the minimap button to move it around the minimap.
   Put the last number it prints on the `## Interface:` line, or tick **Load out of date AddOns** in the AddOns list.
 - **Nothing shows:** check that enemy nameplates are on, that you're a Rogue or in Cat Form, and that the target is hostile and alive.
 - **Pips show as solid green squares:** the game can't find the images. Check that `NameplateCombos/media/` exists and restart the game.
-- **Damage number shows `?`:** type `/ncp debug` with a target selected and a few combo points. It lists the tracked finisher, the rank found and the damage numbers read from its tooltip, so you can see which step is missing.
+- **Finisher damage shows `?` or no overlay:** type `/ncp debug` with a target selected and a few combo points. It lists the tracked finisher, the rank found and the damage numbers read from its tooltip, so you can see which step is missing.
 - **Lost the minimap button:** type `/ncp` and tick **Show minimap button**.
 
 ## Development

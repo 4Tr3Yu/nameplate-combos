@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.7.0
+
+### New
+
+- **Health bar overlay is back.** A yellow strip over the end of the target's health bar shows the health your finisher would take off. It turns red when the finisher would kill. It works in combat, even when the game hides the target's health from addons.
+- **Show damage as:** choose between the health bar overlay (default), the number next to the combo points, or both.
+- Overlay opacity option.
+
+### Notes
+
+- If the overlay can't be drawn on a nameplate, the number shows instead, and a grey **?** still shows when the damage can't be worked out.
+
 ## 1.6.2
 
 ### Fixed

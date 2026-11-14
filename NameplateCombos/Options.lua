@@ -207,6 +207,48 @@ local function CreateSpellDropdown(parent)
     return holder
 end
 
+local DISPLAY_CHOICES = {
+    { value = "OVERLAY", text = "Health bar overlay" },
+    { value = "NUMBER",  text = "Number" },
+    { value = "BOTH",    text = "Both" },
+}
+
+local function CreateDisplayDropdown(parent)
+    local holder = CreateFrame("Frame", nil, parent)
+    holder:SetSize(220, 46)
+
+    local title = CreateLabel(holder, "Show damage as", "GameFontHighlightSmall")
+    title:SetPoint("TOPLEFT", 0, 0)
+
+    local dd = CreateFrame("Frame", ADDON_NAME .. "DisplayDropdown", holder, "UIDropDownMenuTemplate")
+    dd:SetPoint("TOPLEFT", -16, -12)
+    UIDropDownMenu_SetWidth(dd, 180)
+    UIDropDownMenu_Initialize(dd, function(_, level)
+        for _, choice in ipairs(DISPLAY_CHOICES) do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = choice.text
+            info.checked = (ns.db.damageDisplay == choice.value)
+            info.func = function()
+                ns.db.damageDisplay = choice.value
+                holder:Refresh()
+                Changed()
+            end
+            UIDropDownMenu_AddButton(info, level)
+        end
+    end)
+
+    function holder:Refresh()
+        for _, choice in ipairs(DISPLAY_CHOICES) do
+            if choice.value == ns.db.damageDisplay then
+                UIDropDownMenu_SetText(dd, choice.text)
+            end
+        end
+    end
+
+    table.insert(controls, holder)
+    return holder
+end
+
 -- Shows the rank and damage range the overlay is using.
 local function CreateFinisherInfo(parent)
     local fs = CreateLabel(parent, "", "GameFontHighlightSmall")
@@ -351,11 +393,16 @@ local function CreatePanel()
 
     -- Third column -----------------------------------------------------
     column(500)
-    place(CreateLabel(panel, "Damage number"), 22)
+    place(CreateLabel(panel, "Finisher damage"), 22)
+    place(CreateDisplayDropdown(panel), 46)
     place(CreateSpellDropdown(panel), 46)
     place(CreateFinisherInfo(panel), 32)
-    place(CreateColorSwatch(panel, "Number color", "overlayColor"), 22)
+    place(CreateColorSwatch(panel, "Damage color", "overlayColor"), 22)
     place(CreateColorSwatch(panel, "Lethal color", "overlayKillColor"), 30)
+    place(CreateSlider(panel, "Overlay opacity", 0.1, 1, 0.05,
+        function() return db().overlayAlpha end,
+        function(v) db().overlayAlpha = v end,
+        function(v) return math.floor(v * 100 + 0.5) .. "%" end), 38)
     place(CreateSlider(panel, "Damage adjust (armor, talents)", 0.5, 1.5, 0.05,
         function() return db().overlayScale end,
         function(v) db().overlayScale = v end,
